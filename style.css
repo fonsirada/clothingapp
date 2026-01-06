@@ -1,0 +1,14 @@
+body {
+    margin: 0;
+    background: black;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+video {
+    width: 640px;
+    height: 480px;
+    background: #222;
+}
