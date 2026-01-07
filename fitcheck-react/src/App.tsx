@@ -26,14 +26,17 @@ function App() {
       maxNumHands: 1,
       modelComplexity: 1,
       minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minTrackingConfidence: 0.7,
+      selfieMode: true
     });
 
     hands.onResults(onResults);
 
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
-        await hands.send({ image: videoRef.current! });
+        if (videoRef.current && videoRef.current.readyState >= 2) {
+          await hands.send({ image: videoRef.current! });
+        }
       },
       width: 640,
       height: 480
@@ -42,8 +45,15 @@ function App() {
     camera.start();
 
     function onResults(results: Results) {
-      if (!results.multiHandLandmarks || !containerRef.current) return;
+      if (!containerRef.current) return;
 
+      // no hand detected
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        setPinching(false);
+        return;
+      }
+
+      // hand detected
       const landmarks = results.multiHandLandmarks[0];
 
       // thumb tip & index tip
