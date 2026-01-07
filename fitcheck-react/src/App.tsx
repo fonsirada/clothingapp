@@ -1,77 +1,86 @@
 import { useEffect, useRef, useState } from 'react';
-import { Hands } from "@mediapipe/hands";
+import { Hands, Results } from "@mediapipe/hands";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 import shirtImage from "./assets/shirt.png";
 
 function App() {
+  // states
+  const [pinching, setPinching] = useState(false);
+  const [shirtPos, setShirtPos] = useState({ x: 220, y: 150});
+
+  // refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const shirtRef = useRef<HTMLImageElement>(null);
 
-  const [dragging, setDragging] = useState(false);
-  const [shirtPos, setShirtPos] = useState({ x: 220, y: 150});
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-
+  // effect
   useEffect(() => {
-    async function startCamera() {
-      if (videoRef.current) {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        videoRef.current.srcObject = stream;
-      }
-    }
-    startCamera();
-  }, []);
+    if (!videoRef.current) return;
 
-  
-
-  const handleMouseDown = (e : React.MouseEvent<HTMLImageElement, MouseEvent>) => {
-    if (!shirtRef.current || !containerRef.current) return;
-
-    const shirtRect = shirtRef.current.getBoundingClientRect();
-    const containerRect = containerRef.current.getBoundingClientRect();
-
-    const mouseX = e.clientX - containerRect.left;
-    const mouseY = e.clientY - containerRect.top;
-
-    setOffset({
-      x: mouseX - shirtRect.left + containerRect.left,
-      y: mouseY - shirtRect.top + containerRect.top,
+    const hands = new Hands({
+      locateFile: (file) =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
-    setDragging(true);
-  };
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
 
-  const handleMouseUp = () => {
-    setDragging(false);
-  };
+    hands.onResults(onResults);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-    if (!dragging || !containerRef.current) return;
+    const camera = new Camera(videoRef.current, {
+      onFrame: async () => {
+        await hands.send({ image: videoRef.current! });
+      },
+      width: 640,
+      height: 480
+    });
 
-    const containerRect = containerRef.current.getBoundingClientRect();
-    
-    const x = e.clientX - containerRect.left - offset.x;
-    const y = e.clientY - containerRect.top - offset.y;
+    camera.start();
 
-    setShirtPos({x, y});
-  };
+    function onResults(results: Results) {
+      if (!results.multiHandLandmarks || !containerRef.current) return;
 
+      const landmarks = results.multiHandLandmarks[0];
+
+      // thumb tip & index tip
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+
+      // dist between fingers
+      const dx = thumbTip.x - indexTip.x;
+      const dy = thumbTip.y - indexTip.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      const pinch = distance < 0.05;
+      setPinching(pinch);
+
+      if (pinch) {
+        const rect = containerRef.current.getBoundingClientRect();
+
+        setShirtPos({
+          x: indexTip.x * rect.width - 100,
+          y: indexTip.y * rect.height - 100
+        });
+      }
+    }
+  }, []);
+
+  // render
   return (
-    <div 
-      ref={containerRef}
-      className="container"
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}  
-    >
-      <video ref={videoRef} autoPlay playsInline className="video" />
+    <div ref={containerRef} className="video-container">
+      <video ref={videoRef} autoPlay playsInline />
       <img
-        ref={shirtRef}
         src={shirtImage}
-        alt="Shirt"
         className="shirt"
-        style={{ left: shirtPos.x, top: shirtPos.y }}
-        onMouseDown={handleMouseDown}
+        style={{
+          left: shirtPos.x,
+          top: shirtPos.y,
+          border: pinching ? "2px solid lime" : "none"
+        }}
         draggable={false}
       />
     </div>
