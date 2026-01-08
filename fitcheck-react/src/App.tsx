@@ -29,6 +29,8 @@ function App() {
   const hoverToolRef = useRef<Tool>("NONE");
   const hoverStartRef = useRef<number | null>(null);
   const hoverConsumedRef = useRef(false);
+  // current tool ref
+  const activeToolRef = useRef<Tool>("NONE");
 
   function isHovering(x: number, y: number, ele: HTMLDivElement | null) {
     if (!ele) return false;
@@ -41,7 +43,6 @@ function App() {
     const right = eleRect.right - containerRect.left;
     const bottom = eleRect.bottom - containerRect.top;
 
-    console.log(x, y, left, right, top, bottom);
     return x >= left && x <= right && y >= top && y <= bottom;
   }
 
@@ -109,44 +110,34 @@ function App() {
       //// tool selection
       let hoveredTool: Tool = "NONE";
       if (!isPinching) {
-        if (isHovering(fingerX, fingerY, moveBtnRef.current)) {
-          hoveredTool = "MOVE";
-        } else if (isHovering(fingerX, fingerY, rotateBtnRef.current)) {
-          hoveredTool = "ROTATE";
-        } else if (isHovering(fingerX, fingerY, scaleBtnRef.current)) {
-          hoveredTool = "SCALE";
-        }
+        if (isHovering(fingerX, fingerY, moveBtnRef.current)) hoveredTool = "MOVE";
+        else if (isHovering(fingerX, fingerY, rotateBtnRef.current)) hoveredTool = "ROTATE";
+        else if (isHovering(fingerX, fingerY, scaleBtnRef.current)) hoveredTool = "SCALE";
       }
-      console.log(hoveredTool);
-
-      let currentTool = "NONE";
+ 
       const now = performance.now();
-
+      
       // not hovering over a button
       if (hoveredTool === "NONE") {
         hoverToolRef.current = "NONE";
         hoverStartRef.current = null;
         hoverConsumedRef.current = false;
-        return;
-      }
-      // hovering over a new button
-      if (hoverToolRef.current !== hoveredTool) {
+      } else if (hoverToolRef.current !== hoveredTool) {
+        // hovering over a new button
         hoverToolRef.current = hoveredTool;
         hoverStartRef.current = now;
         hoverConsumedRef.current = false;
-        return;
-      }
-      // hovering over same button but already toggled - do nothing
-      if (hoverConsumedRef.current) {
-        return;
-      }
-      // hovering over same button for at least .5 seconds, but not yet toggled
-      if (hoverStartRef.current && now - hoverStartRef.current > DWELL_TIME) {
+      } else if (!hoverConsumedRef.current && hoverStartRef.current && now - hoverStartRef.current > DWELL_TIME) {
+        // hovering over same button for at least .5 seconds, but not yet toggled
+        const newTool = activeToolRef.current == hoveredTool ? "NONE" : hoveredTool;
+        activeToolRef.current = newTool;
+        setActiveTool(newTool);
         // toggle lock
-        setActiveTool((prev) => prev === hoveredTool ? "NONE" : hoveredTool);
-        currentTool = currentTool === hoveredTool ? "NONE" : hoveredTool;
         hoverConsumedRef.current = true;
       }
+
+      const currentTool = activeToolRef.current;
+      console.log(currentTool);
 
       ///// execute tool
       if (currentTool === "MOVE" && isPinching) {
@@ -215,8 +206,8 @@ function App() {
           <div
             style={{
               position: "absolute",
-              left: fingerPos?.x,
-              top: fingerPos?.y,
+              left: fingerPos.x,
+              top: fingerPos.y,
               width: 14,
               height: 14,
               borderRadius: "50%",
