@@ -23,8 +23,9 @@ video {
 
 .shirt {
   position: absolute;
-  width: 400px;
+  width: 200px;
   z-index: 2;
-  user-select: none;
   pointer-events: none;
+  user-select: none;
+  transform-origin: center center;
 }
