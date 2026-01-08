@@ -17,6 +17,8 @@ function App() {
   // refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const rotationStartRef = useRef<number | null>(null);
+  const baseRotationRef = useRef(0);
 
   // effect
   useEffect(() => {
@@ -57,6 +59,7 @@ function App() {
       if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
         setGestureMode("NONE");
         setPinching(false);
+        rotationStartRef.current = null;
         return;
       }
 
@@ -81,7 +84,7 @@ function App() {
       );
 
       const isPinching = pinchDist < 0.05;
-      const isRotate = isPinching && pinkyDist > 0.4;
+      const isRotate = isPinching && pinkyDist > 0.2;
       const isScale = handsDetected === 2 && isPinching;
 
       setPinching(isPinching);
@@ -93,6 +96,7 @@ function App() {
       else if (isRotate) currentGesture = "ROTATE";
       else if (isPinching) currentGesture = "MOVE";
 
+      console.log(currentGesture);
       setGestureMode(currentGesture);
 
       // gesture application
@@ -102,14 +106,29 @@ function App() {
           y: indexTip.y * rect.height - 100,
         });
       }
+
       if (currentGesture === "ROTATE") {
         // using angle of index finger to rotate shirt
         const angleRad = Math.atan2(
           indexTip.y - indexBase.y,
           indexTip.x - indexBase.x
         );
-        setRotation(angleRad * (180 / Math.PI));
+
+        // first frame
+        if (rotationStartRef.current === null) {
+          rotationStartRef.current = angleRad;
+          baseRotationRef.current = rotation;
+        } else {
+          const delta = angleRad - rotationStartRef.current;
+          if (Math.abs(delta) > 0.05) {
+            setRotation(baseRotationRef.current + delta * (180 / Math.PI));
+          }
+        }
+      } else {
+        // reset latch
+        rotationStartRef.current = null;
       }
+
       if (currentGesture === "SCALE") {
         const indexTip1 = results.multiHandLandmarks[0][8];
         const indexTip2 = results.multiHandLandmarks[1][8];
