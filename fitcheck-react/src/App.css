@@ -7,6 +7,12 @@ body {
   height: 100vh;
 }
 
+.app-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .video-container {
   position: relative;
   width: 640px;
@@ -28,4 +34,23 @@ video {
   pointer-events: none;
   user-select: none;
   transform-origin: center center;
+}
+
+.controls {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: #333;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #555;
 }
