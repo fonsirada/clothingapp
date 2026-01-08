@@ -4,23 +4,38 @@ import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 import shirtImage from "./assets/shirt.png";
 
-type GestureMode = "NONE" | "MOVE" | "ROTATE" | "SCALE";
+type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
+const DWELL_TIME = 500;
 
 function App() {
-  // states
+  //// states
   const [shirtPos, setShirtPos] = useState({ x: 220, y: 150});
   const [rotation, setRotation] = useState(0);
   const [scale, setScale] = useState(1);
   const [pinching, setPinching] = useState(false);
-  const [gestureMode, setGestureMode] = useState<GestureMode>("NONE");
+  const [activeTool, setActiveTool] = useState<Tool>("NONE");
 
-  // refs
+  //// refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const moveBtnRef = useRef<HTMLDivElement>(null);
+  const rotateBtnRef = useRef<HTMLDivElement>(null);
+  const scaleBtnRef = useRef<HTMLDivElement>(null);
+  // rotation latch
   const rotationStartRef = useRef<number | null>(null);
   const baseRotationRef = useRef(0);
+  // button dwell system
+  const hoverToolRef = useRef<Tool>("NONE");
+  const hoverStartRef = useRef<number | null>(null);
 
-  // effect
+  function isHovering(x: number, y: number, ele: HTMLDivElement | null) {
+    if (!ele) return false;
+    const rect = ele.getBoundingClientRect();
+    console.log(x, y, rect.left, rect.right, rect.top, rect.bottom);
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  // mediapipe effect
   useEffect(() => {
     if (!videoRef.current) return;
 
@@ -45,8 +60,8 @@ function App() {
           await hands.send({ image: videoRef.current! });
         }
       },
-      width: 640,
-      height: 480
+      width: 1280,
+      height: 720
     });
 
     camera.start();
@@ -57,8 +72,10 @@ function App() {
 
       // no hands detected
       if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        setGestureMode("NONE");
         setPinching(false);
+        setActiveTool("NONE");
+        hoverToolRef.current = "NONE";
+        hoverStartRef.current = null;
         rotationStartRef.current = null;
         return;
       }
@@ -66,48 +83,66 @@ function App() {
       const rect = containerRef.current.getBoundingClientRect();
       const handsDetected = results.multiHandLandmarks.length;
       const landmarks = results.multiHandLandmarks[0];
-
-      // fingers
       const thumbTip = landmarks[4];
       const indexTip = landmarks[8];
-      const pinkyTip = landmarks[20];
       const indexBase = landmarks[5];
+      const fingerX = rect.left + indexTip.x * rect.width;
+      const fingerY = rect.top + indexTip.y * rect.height;
 
-      // distances for gestures - pinching is dist between thumb&index, rotate is pinching and pinky
+      // detecting pinching using distance between thumb and index
       const pinchDist = Math.hypot(
         thumbTip.x - indexTip.x,
         thumbTip.y - indexTip.y
       );
-      const pinkyDist = Math.hypot(
-        pinkyTip.x - indexTip.x,
-        pinkyTip.y - indexTip.y
-      );
-
       const isPinching = pinchDist < 0.05;
-      const isRotate = isPinching && pinkyDist > 0.2;
-      const isScale = handsDetected === 2 && isPinching;
-
       setPinching(isPinching);
 
-      // gesture selection - local
-      let currentGesture: GestureMode = "NONE";
-      
-      if (isScale) currentGesture = "SCALE";
-      else if (isRotate) currentGesture = "ROTATE";
-      else if (isPinching) currentGesture = "MOVE";
+      //// tool selection
+      let hoveredTool: Tool = "NONE";
+      if (!isPinching) {
+        if (isHovering(fingerX, fingerY, moveBtnRef.current)) {
+          hoveredTool = "MOVE";
+        } else if (isHovering(fingerX, fingerY, rotateBtnRef.current)) {
+          hoveredTool = "ROTATE";
+        } else if (isHovering(fingerX, fingerY, scaleBtnRef.current)) {
+          hoveredTool = "SCALE";
+        }
+      }
+      console.log(hoveredTool);
 
-      console.log(currentGesture);
-      setGestureMode(currentGesture);
+      let currentTool = "NONE";
+      const now = performance.now();
 
-      // gesture application
-      if (currentGesture === "MOVE") {
+      // not hovering over a button
+      if (hoveredTool === "NONE") {
+        hoverToolRef.current = "NONE";
+        hoverStartRef.current = null;
+        return;
+      }
+      // hovering over a new button
+      if (hoverToolRef.current !== hoveredTool) {
+        hoverToolRef.current = hoveredTool;
+        hoverStartRef.current = now;
+        return;
+      }
+      // hovering over same button for at least .5 seconds
+      if (hoverStartRef.current && now - hoverStartRef.current > DWELL_TIME) {
+        // toggle lock
+        setActiveTool((prev) => prev === hoveredTool ? "NONE" : hoveredTool);
+        currentTool = currentTool === hoveredTool ? "NONE" : hoveredTool;
+        hoverToolRef.current = "NONE";
+        hoverStartRef.current = null;
+      }
+
+      ///// execute tool
+      if (currentTool === "MOVE" && isPinching) {
         setShirtPos({
-          x: indexTip.x * rect.width - 100,
-          y: indexTip.y * rect.height - 100,
+          x: fingerX, // x: indexTip.x * rect.width - 100,
+          y: fingerY // y: indexTip.y * rect.height - 100,
         });
       }
 
-      if (currentGesture === "ROTATE") {
+      if (currentTool === "ROTATE" && isPinching) {
         // using angle of index finger to rotate shirt
         const angleRad = Math.atan2(
           indexTip.y - indexBase.y,
@@ -129,7 +164,7 @@ function App() {
         rotationStartRef.current = null;
       }
 
-      if (currentGesture === "SCALE") {
+      if (currentTool === "SCALE" && isPinching && handsDetected === 2) {
         const indexTip1 = results.multiHandLandmarks[0][8];
         const indexTip2 = results.multiHandLandmarks[1][8];
 
@@ -161,12 +196,12 @@ function App() {
           }}
           draggable={false}
         />
-      </div>
 
-      <div className="controls">
-        <button onClick={() => setGestureMode("NONE")}>Disable Gestures</button> 
-        <button onClick={() => setRotation(0)}>Reset Rotation</button>
-        <button onClick={() => setScale(1)}>Reset Scale</button>
+        <div className="toolbar">
+          <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
+          <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
+          <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
+        </div>
       </div>
     </div>
   );
