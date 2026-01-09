@@ -6,6 +6,8 @@ import shirtImage from "./assets/shirt.png";
 
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
 const DWELL_TIME = 500;
+const ROTATION_SPEED = 0.005;
+const SCALE_SPEED = 0.005;
 
 function App() {
   //// states
@@ -25,12 +27,15 @@ function App() {
   // rotation latch
   const rotationStartRef = useRef<number | null>(null);
   const baseRotationRef = useRef(0);
-  // button dwell system
+  // hover dwell system
   const hoverToolRef = useRef<Tool>("NONE");
   const hoverStartRef = useRef<number | null>(null);
   const hoverConsumedRef = useRef(false);
   // current tool ref
   const activeToolRef = useRef<Tool>("NONE");
+  // finger refs for rotating and scaling
+  const lastFingerXRef = useRef<number | null>(null);
+  const lastFingerYRef = useRef<number | null>(null);
 
   function isHovering(x: number, y: number, ele: HTMLDivElement | null) {
     if (!ele) return false;
@@ -137,7 +142,8 @@ function App() {
       }
 
       const currentTool = activeToolRef.current;
-      console.log(currentTool);
+      lastFingerXRef.current = null;
+      lastFingerYRef.current = null;
 
       ///// execute tool
       if (currentTool === "MOVE" && isPinching) {
@@ -148,35 +154,27 @@ function App() {
       }
 
       if (currentTool === "ROTATE" && isPinching) {
-        // using angle of index finger to rotate shirt
-        const angleRad = Math.atan2(
-          indexTip.y - indexBase.y,
-          indexTip.x - indexBase.x
-        );
-
-        // first frame
+        console.log(rotationStartRef.current, fingerY);
+        // using vertical movement to rotate shirt
         if (rotationStartRef.current === null) {
-          rotationStartRef.current = angleRad;
+          rotationStartRef.current = fingerY;
           baseRotationRef.current = rotation;
-        } else {
-          const delta = angleRad - rotationStartRef.current;
-          if (Math.abs(delta) > 0.05) {
-            setRotation(baseRotationRef.current + delta * (180 / Math.PI));
-          }
+          return;
         }
+        const deltaY = fingerY - rotationStartRef.current;
+        const newRotation = baseRotationRef.current + deltaY * ROTATION_SPEED;
+        setRotation(newRotation);
       } else {
         // reset latch
         rotationStartRef.current = null;
       }
 
-      if (currentTool === "SCALE" && isPinching && handsDetected === 2) {
-        const indexTip1 = results.multiHandLandmarks[0][8];
-        const indexTip2 = results.multiHandLandmarks[1][8];
-
-        // mapping the distance between index fingers as scale (limited so it doesnt explode)
-        const dist = Math.hypot(indexTip1.x - indexTip2.x, indexTip1.y - indexTip2.y);
-        const newScale = Math.min(Math.max(dist * 3, 0.6), 2);
-        setScale(newScale);
+      if (currentTool === "SCALE" && isPinching) {
+        if (lastFingerXRef.current !== null) {
+          const deltaX = fingerX - lastFingerXRef.current;
+          setScale((s) => Math.min(Math.max(s + deltaX * SCALE_SPEED, 0.5), 2));
+        }
+        lastFingerXRef.current = fingerX;
       }
     }
   }, []);
