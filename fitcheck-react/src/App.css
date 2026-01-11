@@ -39,19 +39,19 @@ video {
 
 .toolbar {
   position: absolute;
-  right: 20px;
-  top: 25%;
+  left: 20%;
+  top: 6%;
   transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex-direction: row;
+  gap: 100px;
   z-index: 3;
 }
 
 .tool {
   width: 90px;
   padding: 14px;
-  background: #222;
+  background: gray;
   color: white;
   text-align: center;
   border-radius: 10px;

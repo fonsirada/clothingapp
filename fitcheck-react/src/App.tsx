@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Hands, Results } from "@mediapipe/hands";
+import { Hands } from "@mediapipe/hands";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 import shirtImage from "./assets/shirt.png";
@@ -7,14 +7,14 @@ import shirtImage from "./assets/shirt.png";
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
 
 const DWELL_TIME = 500;
-const ROTATION_SPEED = 0.005;
-const SCALE_SPEED = 0.005;
+const ROTATION_SPEED = 0.5;
+const SCALE_SPEED = 0.5;
 
 function App() {
   //// states
-  const [shirtPos, setShirtPos] = useState({ x: 220, y: 150});
-  const [rotation, setRotation] = useState(0);
-  const [scale, setScale] = useState(1);
+  const [shirtPos, setShirtPos] = useState({ x: 125, y: 250});
+  const [rotation, setRotation] = useState(75);
+  const [scale, setScale] = useState(.75);
   const [fingerPos, setFingerPos] = useState<{ x: number; y: number } | null>(null);
   const [pinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
@@ -26,18 +26,21 @@ function App() {
   const moveBtnRef = useRef<HTMLDivElement>(null);
   const rotateBtnRef = useRef<HTMLDivElement>(null);
   const scaleBtnRef = useRef<HTMLDivElement>(null);
-  // rotation latch
+  // rotation refs
   const rotationStartRef = useRef<number | null>(null);
-  const baseRotationRef = useRef(0);
+  const baseRotationRef = useRef(75);
+  const rotationRef = useRef(75);
+  // scale refs
+  const scaleStartRef = useRef<number | null>(null);
+  const baseScaleRef = useRef(.75);
+  const scaleRef = useRef(.75);
   // hover dwell system
   const hoverToolRef = useRef<Tool>("NONE");
   const hoverStartRef = useRef<number | null>(null);
   const hoverConsumedRef = useRef(false);
   // current tool ref
   const activeToolRef = useRef<Tool>("NONE");
-  // finger refs for rotating and scaling
-  const lastFingerXRef = useRef<number | null>(null);
-  const lastFingerYRef = useRef<number | null>(null);
+  const wasPinchingRef = useRef(false);
 
   // mediapipe effect
   useEffect(() => {
@@ -60,7 +63,6 @@ function App() {
       // no hands detected
       if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
         setPinching(false);
-        setActiveTool("NONE");
         setFingerPos(null);
         hoverToolRef.current = "NONE";
         hoverStartRef.current = null;
@@ -149,8 +151,11 @@ function App() {
   function handleTool(fingerX: number, fingerY: number, isPinching: boolean) {
     const currentTool = activeToolRef.current;
 
-    lastFingerXRef.current = null;
-    lastFingerYRef.current = null;
+    if (wasPinchingRef.current && !isPinching) {
+      rotationStartRef.current = null;
+      scaleStartRef.current = null;
+    }
+    wasPinchingRef.current = isPinching;
 
     ///// execute tool
     if (currentTool === "MOVE" && isPinching) {
@@ -158,27 +163,30 @@ function App() {
     }
 
     if (currentTool === "ROTATE" && isPinching) {
-      console.log(rotationStartRef.current, fingerY);
       // using vertical movement to rotate shirt
       if (rotationStartRef.current === null) {
         rotationStartRef.current = fingerY;
-        baseRotationRef.current = rotation;
+        baseRotationRef.current = rotationRef.current;
         return;
       }
       const deltaY = fingerY - rotationStartRef.current;
       const newRotation = baseRotationRef.current + deltaY * ROTATION_SPEED;
+      rotationRef.current = newRotation;
       setRotation(newRotation);
-    } else {
-      // reset latch
-      rotationStartRef.current = null;
     }
 
     if (currentTool === "SCALE" && isPinching) {
-      if (lastFingerXRef.current !== null) {
-        const deltaX = fingerX - lastFingerXRef.current;
-        setScale((s) => Math.min(Math.max(s + deltaX * SCALE_SPEED, 0.5), 2));
-      }
-      lastFingerXRef.current = fingerX;
+     // initialize latch
+     if (scaleStartRef.current === null) {
+      scaleStartRef.current = fingerX;
+      baseScaleRef.current = scaleRef.current;
+      return;
+     }
+
+     const deltaX = fingerX - scaleStartRef.current;
+     const newScale = Math.min(Math.max(baseScaleRef.current + deltaX * SCALE_SPEED * 0.01, 0.5), 2.5);
+     scaleRef.current = newScale;
+     setScale(newScale);
     }
   }
 
@@ -203,7 +211,7 @@ function App() {
           draggable={false}
         />
 
-        {fingerPos && (
+        {/* {fingerPos && (
           <div
             style={{
               position: "absolute",
@@ -218,7 +226,7 @@ function App() {
               zIndex: 10
             }}
           />
-        )}
+        )} */}
 
         <div className="toolbar">
           <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
