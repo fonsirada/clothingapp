@@ -5,6 +5,7 @@ import './App.css';
 import shirtImage from "./assets/shirt.png";
 
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
+
 const DWELL_TIME = 500;
 const ROTATION_SPEED = 0.005;
 const SCALE_SPEED = 0.005;
@@ -12,13 +13,14 @@ const SCALE_SPEED = 0.005;
 function App() {
   //// states
   const [shirtPos, setShirtPos] = useState({ x: 220, y: 150});
-  const [fingerPos, setFingerPos] = useState<{ x: number; y: number } | null>(null);
   const [rotation, setRotation] = useState(0);
   const [scale, setScale] = useState(1);
+  const [fingerPos, setFingerPos] = useState<{ x: number; y: number } | null>(null);
   const [pinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
 
   //// refs
+  // html elements
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const moveBtnRef = useRef<HTMLDivElement>(null);
@@ -37,6 +39,67 @@ function App() {
   const lastFingerXRef = useRef<number | null>(null);
   const lastFingerYRef = useRef<number | null>(null);
 
+  // mediapipe effect
+  useEffect(() => {
+    if (!videoRef.current) return;
+
+    const hands = new Hands({
+      locateFile: (file) =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
+      selfieMode: true
+    });
+
+    hands.onResults((results) => {
+      // no hands detected
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        setPinching(false);
+        setActiveTool("NONE");
+        setFingerPos(null);
+        hoverToolRef.current = "NONE";
+        hoverStartRef.current = null;
+        rotationStartRef.current = null;
+        return;
+      }
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const landmarks = results.multiHandLandmarks[0];
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const fingerX = indexTip.x * rect.width;
+      const fingerY = indexTip.y * rect.height;
+      setFingerPos({ x: fingerX, y: fingerY });
+
+      // detect pinching
+      const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+      const isPinching = pinchDist < 0.05;
+      setPinching(isPinching);
+
+      // selecting and handling tools
+      handleHover(fingerX, fingerY, isPinching);
+      handleTool(fingerX, fingerY, isPinching);
+    });
+
+    // starting camera
+    const camera = new Camera(videoRef.current, {
+      onFrame: async () => {
+        if (videoRef.current && videoRef.current.readyState >= 2) {
+          await hands.send({ image: videoRef.current! });
+        }
+      },
+      width: 1280,
+      height: 720
+    });
+
+    camera.start();
+  }, []);
+
   function isHovering(x: number, y: number, ele: HTMLDivElement | null) {
     if (!ele) return false;
     const eleRect = ele.getBoundingClientRect();
@@ -51,133 +114,73 @@ function App() {
     return x >= left && x <= right && y >= top && y <= bottom;
   }
 
-  // mediapipe effect
-  useEffect(() => {
-    if (!videoRef.current) return;
+  //// tool selection
+  function handleHover(x: number, y: number, isPinching: boolean) {
+    let hoveredTool: Tool = "NONE";
 
-    const hands = new Hands({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
+    if (!isPinching) {
+      if (isHovering(x, y, moveBtnRef.current)) hoveredTool = "MOVE";
+      else if (isHovering(x, y, rotateBtnRef.current)) hoveredTool = "ROTATE";
+      else if (isHovering(x, y, scaleBtnRef.current)) hoveredTool = "SCALE";
+    }
 
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
-      selfieMode: true
-    });
+    const now = performance.now();
+    
+    // not hovering over a button
+    if (hoveredTool === "NONE") {
+      hoverToolRef.current = "NONE";
+      hoverStartRef.current = null;
+      hoverConsumedRef.current = false;
+    } else if (hoverToolRef.current !== hoveredTool) {
+      // hovering over a new button
+      hoverToolRef.current = hoveredTool;
+      hoverStartRef.current = now;
+      hoverConsumedRef.current = false;
+    } else if (!hoverConsumedRef.current && hoverStartRef.current && now - hoverStartRef.current > DWELL_TIME) {
+      // hovering over same button for at least .5 seconds, but not yet toggled
+      const newTool = activeToolRef.current == hoveredTool ? "NONE" : hoveredTool;
+      activeToolRef.current = newTool;
+      setActiveTool(newTool);
+      // toggle lock
+      hoverConsumedRef.current = true;
+    }
+  }
 
-    hands.onResults(onResults);
+  function handleTool(fingerX: number, fingerY: number, isPinching: boolean) {
+    const currentTool = activeToolRef.current;
 
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (videoRef.current && videoRef.current.readyState >= 2) {
-          await hands.send({ image: videoRef.current! });
-        }
-      },
-      width: 1280,
-      height: 720
-    });
+    lastFingerXRef.current = null;
+    lastFingerYRef.current = null;
 
-    camera.start();
+    ///// execute tool
+    if (currentTool === "MOVE" && isPinching) {
+      setShirtPos({ x: fingerX, y: fingerY });
+    }
 
-    // results handling
-    function onResults(results: Results) {
-      if (!containerRef.current) return;
-
-      // no hands detected
-      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        setPinching(false);
-        setActiveTool("NONE");
-        setFingerPos(null);
-        hoverToolRef.current = "NONE";
-        hoverStartRef.current = null;
-        rotationStartRef.current = null;
+    if (currentTool === "ROTATE" && isPinching) {
+      console.log(rotationStartRef.current, fingerY);
+      // using vertical movement to rotate shirt
+      if (rotationStartRef.current === null) {
+        rotationStartRef.current = fingerY;
+        baseRotationRef.current = rotation;
         return;
       }
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const handsDetected = results.multiHandLandmarks.length;
-      const landmarks = results.multiHandLandmarks[0];
-      const thumbTip = landmarks[4];
-      const indexTip = landmarks[8];
-      const indexBase = landmarks[5];
-      const fingerX = indexTip.x * rect.width;
-      const fingerY = indexTip.y * rect.height;
-      setFingerPos({ x: fingerX, y: fingerY });
-
-      // detecting pinching using distance between thumb and index
-      const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-      const isPinching = pinchDist < 0.05;
-      setPinching(isPinching);
-
-      //// tool selection
-      let hoveredTool: Tool = "NONE";
-      if (!isPinching) {
-        if (isHovering(fingerX, fingerY, moveBtnRef.current)) hoveredTool = "MOVE";
-        else if (isHovering(fingerX, fingerY, rotateBtnRef.current)) hoveredTool = "ROTATE";
-        else if (isHovering(fingerX, fingerY, scaleBtnRef.current)) hoveredTool = "SCALE";
-      }
- 
-      const now = performance.now();
-      
-      // not hovering over a button
-      if (hoveredTool === "NONE") {
-        hoverToolRef.current = "NONE";
-        hoverStartRef.current = null;
-        hoverConsumedRef.current = false;
-      } else if (hoverToolRef.current !== hoveredTool) {
-        // hovering over a new button
-        hoverToolRef.current = hoveredTool;
-        hoverStartRef.current = now;
-        hoverConsumedRef.current = false;
-      } else if (!hoverConsumedRef.current && hoverStartRef.current && now - hoverStartRef.current > DWELL_TIME) {
-        // hovering over same button for at least .5 seconds, but not yet toggled
-        const newTool = activeToolRef.current == hoveredTool ? "NONE" : hoveredTool;
-        activeToolRef.current = newTool;
-        setActiveTool(newTool);
-        // toggle lock
-        hoverConsumedRef.current = true;
-      }
-
-      const currentTool = activeToolRef.current;
-      lastFingerXRef.current = null;
-      lastFingerYRef.current = null;
-
-      ///// execute tool
-      if (currentTool === "MOVE" && isPinching) {
-        setShirtPos({
-          x: fingerX, // x: indexTip.x * rect.width - 100,
-          y: fingerY // y: indexTip.y * rect.height - 100,
-        });
-      }
-
-      if (currentTool === "ROTATE" && isPinching) {
-        console.log(rotationStartRef.current, fingerY);
-        // using vertical movement to rotate shirt
-        if (rotationStartRef.current === null) {
-          rotationStartRef.current = fingerY;
-          baseRotationRef.current = rotation;
-          return;
-        }
-        const deltaY = fingerY - rotationStartRef.current;
-        const newRotation = baseRotationRef.current + deltaY * ROTATION_SPEED;
-        setRotation(newRotation);
-      } else {
-        // reset latch
-        rotationStartRef.current = null;
-      }
-
-      if (currentTool === "SCALE" && isPinching) {
-        if (lastFingerXRef.current !== null) {
-          const deltaX = fingerX - lastFingerXRef.current;
-          setScale((s) => Math.min(Math.max(s + deltaX * SCALE_SPEED, 0.5), 2));
-        }
-        lastFingerXRef.current = fingerX;
-      }
+      const deltaY = fingerY - rotationStartRef.current;
+      const newRotation = baseRotationRef.current + deltaY * ROTATION_SPEED;
+      setRotation(newRotation);
+    } else {
+      // reset latch
+      rotationStartRef.current = null;
     }
-  }, []);
+
+    if (currentTool === "SCALE" && isPinching) {
+      if (lastFingerXRef.current !== null) {
+        const deltaX = fingerX - lastFingerXRef.current;
+        setScale((s) => Math.min(Math.max(s + deltaX * SCALE_SPEED, 0.5), 2));
+      }
+      lastFingerXRef.current = fingerX;
+    }
+  }
 
   // render
   return (
