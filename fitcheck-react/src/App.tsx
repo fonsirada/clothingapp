@@ -6,10 +6,10 @@ import shirtImage from "./assets/shirt.png";
 
 //// constants
 const DWELL_TIME = 500;
-const ROTATION_SPEED = 0.1;
-const SCALE_SPEED = 0.1;
+const ROTATION_SPEED = 0.01;
+const SCALE_SPEED = 0.0001;
 const MIN_SCALE = 0.5;
-const MAX_SCALE = 2.5;
+const MAX_SCALE = 2;
 const PINCH_THRESHOLD = 0.05;
 const CURSOR_SIZE = 14;
 
@@ -160,7 +160,6 @@ function useHandTracking(
 }
 
 //// main component
-
 function App() {
   //// states
   const [transform, setTransform] = useState<TransformState>({
@@ -213,7 +212,7 @@ function App() {
   );
 
   /**
-   * handles tool selection via dwell time. (hovering)
+   * handles tool selection via hovering
    */
   const handleToolSelection = useCallback((pos: Position, isPinching: boolean) => {
     const hoveredTool = getHoveredTool(pos, isPinching);
