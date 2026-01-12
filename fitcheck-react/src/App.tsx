@@ -1,140 +1,231 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Hands } from "@mediapipe/hands";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 import shirtImage from "./assets/shirt.png";
 
+//// constants
+const DWELL_TIME = 500;
+const ROTATION_SPEED = 0.1;
+const SCALE_SPEED = 0.1;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 2.5;
+const PINCH_THRESHOLD = 0.05;
+const CURSOR_SIZE = 14;
+
+const MEDIAPIPE_CONFIG = {
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7,
+  selfieMode: true,
+};
+
+const CAMERA_CONFIG = {
+  width: 1280,
+  height: 720
+};
+
+//// types
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
 
-const DWELL_TIME = 500;
-const ROTATION_SPEED = 0.5;
-const SCALE_SPEED = 0.5;
+interface Position {
+  x: number;
+  y: number;
+}
+
+interface HandLandmark {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface TransformState {
+  position: Position;
+  rotation: number;
+  scale: number;
+}
+
+//// utility functions
+/**
+ * calculates if a point is within an element's hitbox
+ * relative to a container element
+ */
+function isPointInElement(
+  point: Position, 
+  element: HTMLElement | null,
+  container: HTMLElement | null
+): boolean {
+  if (!element || !container) return false;
+
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+
+  // position of the element relative to video container
+  const left = elementRect.left - containerRect.left;
+  const top = elementRect.top - containerRect.top;
+  const right = elementRect.right - containerRect.left;
+  const bottom = elementRect.bottom - containerRect.top;
+
+  return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+}
+
+/**
+ * detects pinching with distance between thumb and index finger
+ */
+function detectPinch(thumbTip: HandLandmark, indexTip: HandLandmark): boolean {
+  const dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+  return dist < PINCH_THRESHOLD;
+}
+
+/**
+ * clamps a value between min and max
+ */
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+// hand tracking
+function useHandTracking(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  onHandDetected: (fingerPos: Position, isPinching: boolean) => void,
+  onNoHand: () => void
+) {
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+
+    let hands: Hands | null = null;
+    let camera: Camera | null = null;
+
+    const initializeTracking = async () => {
+      try {
+        hands = new Hands({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+        hands.setOptions(MEDIAPIPE_CONFIG);
+        
+        hands.onResults((results) => {
+          if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+            onNoHand();
+            return;
+          }
+
+          const containerRect = containerRef.current?.getBoundingClientRect();
+          if (!containerRect) return;
+
+          const landmarks = results.multiHandLandmarks[0];
+          const thumbTip = landmarks[4];
+          const indexTip = landmarks[8];
+
+          const fingerPos: Position = {
+            x: indexTip.x * containerRect.width,
+            y: indexTip.y * containerRect.height,
+          };
+
+          const isPinching = detectPinch(thumbTip, indexTip);
+          onHandDetected(fingerPos, isPinching);
+        });
+
+        camera = new Camera(videoRef.current!, {
+          onFrame: async () => {
+            if (videoRef.current && videoRef.current.readyState >= 2) {
+              await hands!.send({ image: videoRef.current! });
+            }
+          },
+          width: CAMERA_CONFIG.width,
+          height: CAMERA_CONFIG.height,
+        });
+
+        await camera.start();
+        setIsInitialized(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to initialize camera");
+        console.error("Hand tracking initialization error:", err);
+      }
+    };
+
+    initializeTracking();
+    return () => {
+      camera?.stop();
+      hands?.close();
+    };
+  }, [videoRef, containerRef, onHandDetected, onNoHand]);
+
+  return {isInitialized, error};
+}
+
+//// main component
 
 function App() {
   //// states
-  const [shirtPos, setShirtPos] = useState({ x: 125, y: 250});
-  const [rotation, setRotation] = useState(75);
-  const [scale, setScale] = useState(.75);
-  const [fingerPos, setFingerPos] = useState<{ x: number; y: number } | null>(null);
-  const [pinching, setPinching] = useState(false);
+  const [transform, setTransform] = useState<TransformState>({
+    position: { x: 125, y: 250},
+    rotation: 75,
+    scale: 0.75,
+  });
+  const [fingerPos, setFingerPos] = useState<Position | null>(null);
+  const [isPinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
 
-  //// refs
-  // html elements
+  //// refs - dom elements
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const moveBtnRef = useRef<HTMLDivElement>(null);
   const rotateBtnRef = useRef<HTMLDivElement>(null);
   const scaleBtnRef = useRef<HTMLDivElement>(null);
-  // rotation refs
+  
+  //// refs - transform state
+  const transformRef = useRef<TransformState>(transform);
   const rotationStartRef = useRef<number | null>(null);
-  const baseRotationRef = useRef(75);
-  const rotationRef = useRef(75);
-  // scale refs
   const scaleStartRef = useRef<number | null>(null);
-  const baseScaleRef = useRef(.75);
-  const scaleRef = useRef(.75);
-  // hover dwell system
+
+  //// refs - tool selection
+  const activeToolRef = useRef<Tool>("NONE");
   const hoverToolRef = useRef<Tool>("NONE");
   const hoverStartRef = useRef<number | null>(null);
   const hoverConsumedRef = useRef(false);
-  // current tool ref
-  const activeToolRef = useRef<Tool>("NONE");
   const wasPinchingRef = useRef(false);
 
-  // mediapipe effect
+  // keep transformRef in sync with state
   useEffect(() => {
-    if (!videoRef.current) return;
+    transformRef.current = transform;
+  }, [transform]);
 
-    const hands = new Hands({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
+  //// tool selection logic
+  /**
+   * determines which tool button is currently being hovered over
+   */
+  const getHoveredTool = useCallback(
+    (pos: Position, isPinching: boolean): Tool => {
+      if (isPinching) return "NONE";
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
-      selfieMode: true
-    });
+      if (isPointInElement(pos, moveBtnRef.current, containerRef.current)) return "MOVE";
+      else if (isPointInElement(pos, rotateBtnRef.current, containerRef.current)) return "ROTATE";
+      else if (isPointInElement(pos, scaleBtnRef.current, containerRef.current)) return "SCALE";
+      
+      return "NONE";
+    }, []
+  );
 
-    hands.onResults((results) => {
-      // no hands detected
-      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        setPinching(false);
-        setFingerPos(null);
-        hoverToolRef.current = "NONE";
-        hoverStartRef.current = null;
-        rotationStartRef.current = null;
-        return;
-      }
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const landmarks = results.multiHandLandmarks[0];
-      const thumbTip = landmarks[4];
-      const indexTip = landmarks[8];
-      const fingerX = indexTip.x * rect.width;
-      const fingerY = indexTip.y * rect.height;
-      setFingerPos({ x: fingerX, y: fingerY });
-
-      // detect pinching
-      const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-      const isPinching = pinchDist < 0.05;
-      setPinching(isPinching);
-
-      // selecting and handling tools
-      handleHover(fingerX, fingerY, isPinching);
-      handleTool(fingerX, fingerY, isPinching);
-    });
-
-    // starting camera
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (videoRef.current && videoRef.current.readyState >= 2) {
-          await hands.send({ image: videoRef.current! });
-        }
-      },
-      width: 1280,
-      height: 720
-    });
-
-    camera.start();
-  }, []);
-
-  function isHovering(x: number, y: number, ele: HTMLDivElement | null) {
-    if (!ele) return false;
-    const eleRect = ele.getBoundingClientRect();
-    const containerRect = containerRef.current.getBoundingClientRect();
-
-    // position of the element relative to video container
-    const left = eleRect.left - containerRect.left;
-    const top = eleRect.top - containerRect.top;
-    const right = eleRect.right - containerRect.left;
-    const bottom = eleRect.bottom - containerRect.top;
-
-    return x >= left && x <= right && y >= top && y <= bottom;
-  }
-
-  //// tool selection
-  function handleHover(x: number, y: number, isPinching: boolean) {
-    let hoveredTool: Tool = "NONE";
-
-    if (!isPinching) {
-      if (isHovering(x, y, moveBtnRef.current)) hoveredTool = "MOVE";
-      else if (isHovering(x, y, rotateBtnRef.current)) hoveredTool = "ROTATE";
-      else if (isHovering(x, y, scaleBtnRef.current)) hoveredTool = "SCALE";
-    }
-
+  /**
+   * handles tool selection via dwell time. (hovering)
+   */
+  const handleToolSelection = useCallback((pos: Position, isPinching: boolean) => {
+    const hoveredTool = getHoveredTool(pos, isPinching);
     const now = performance.now();
-    
-    // not hovering over a button
+
     if (hoveredTool === "NONE") {
+      // not hovering over a button
       hoverToolRef.current = "NONE";
       hoverStartRef.current = null;
       hoverConsumedRef.current = false;
     } else if (hoverToolRef.current !== hoveredTool) {
-      // hovering over a new button
+      // hovering over a new tool
       hoverToolRef.current = hoveredTool;
       hoverStartRef.current = now;
       hoverConsumedRef.current = false;
@@ -143,12 +234,15 @@ function App() {
       const newTool = activeToolRef.current == hoveredTool ? "NONE" : hoveredTool;
       activeToolRef.current = newTool;
       setActiveTool(newTool);
-      // toggle lock
       hoverConsumedRef.current = true;
     }
-  }
+  }, [getHoveredTool]);
 
-  function handleTool(fingerX: number, fingerY: number, isPinching: boolean) {
+  //// tool execution logic
+  /**
+   * executes the currently active tool based on finger position and pinch state
+   */
+  const executeActiveTool = useCallback((pos: Position, isPinching: boolean) => {
     const currentTool = activeToolRef.current;
 
     if (wasPinchingRef.current && !isPinching) {
@@ -157,40 +251,81 @@ function App() {
     }
     wasPinchingRef.current = isPinching;
 
-    ///// execute tool
-    if (currentTool === "MOVE" && isPinching) {
-      setShirtPos({ x: fingerX, y: fingerY });
-    }
+    if (!isPinching) return;
 
-    if (currentTool === "ROTATE" && isPinching) {
-      // using vertical movement to rotate shirt
-      if (rotationStartRef.current === null) {
-        rotationStartRef.current = fingerY;
-        baseRotationRef.current = rotationRef.current;
-        return;
+    switch (currentTool) {
+      case "MOVE":
+        setTransform((prev) => ({
+          ...prev,
+          position: { x: pos.x, y: pos.y },
+        }));
+        break;
+
+      case "ROTATE": {
+        if (rotationStartRef.current === null) {
+          rotationStartRef.current = pos.y;
+          return;
+        }
+
+        const deltaY = pos.y - rotationStartRef.current;
+        const newRotation = transformRef.current.rotation + deltaY * ROTATION_SPEED;
+
+        setTransform((prev) => ({
+          ...prev,
+          rotation: newRotation,
+        }));
+        break;
       }
-      const deltaY = fingerY - rotationStartRef.current;
-      const newRotation = baseRotationRef.current + deltaY * ROTATION_SPEED;
-      rotationRef.current = newRotation;
-      setRotation(newRotation);
+
+      case "SCALE": {
+        if (scaleStartRef.current === null) {
+          scaleStartRef.current = pos.x;
+          return;
+        }
+
+        const deltaX = pos.x - scaleStartRef.current;
+        const newScale = clamp(
+          transformRef.current.scale + deltaX * SCALE_SPEED, 
+          MIN_SCALE,
+          MAX_SCALE
+        );
+
+        setTransform((prev) => ({
+          ...prev,
+          scale: newScale,
+        }));
+        break;
+      }
     }
+  }, []);
 
-    if (currentTool === "SCALE" && isPinching) {
-     // initialize latch
-     if (scaleStartRef.current === null) {
-      scaleStartRef.current = fingerX;
-      baseScaleRef.current = scaleRef.current;
-      return;
-     }
+  const handleHandDetected = useCallback(
+    (pos: Position, isPinching: boolean) => {
+      setFingerPos(pos);
+      setPinching(isPinching);
+      handleToolSelection(pos, isPinching);
+      executeActiveTool(pos, isPinching);
+    }, 
+    [handleToolSelection, executeActiveTool]
+  );
 
-     const deltaX = fingerX - scaleStartRef.current;
-     const newScale = Math.min(Math.max(baseScaleRef.current + deltaX * SCALE_SPEED * 0.01, 0.5), 2.5);
-     scaleRef.current = newScale;
-     setScale(newScale);
-    }
-  }
+  const handleNoHand = useCallback(() => {
+    setFingerPos(null);
+    setPinching(false);
+    hoverToolRef.current = "NONE";
+    hoverStartRef.current = null;
+    rotationStartRef.current = null;
+    scaleStartRef.current = null;
+  }, []);
 
-  // render
+  const { isInitialized, error } = useHandTracking(
+    videoRef,
+    containerRef,
+    handleHandDetected,
+    handleNoHand
+  );
+
+  //// render
   return (
     <div className="app-wrapper">
       <div ref={containerRef} className="video-container">
@@ -199,40 +334,77 @@ function App() {
           src={shirtImage}
           className="shirt"
           style={{
-            left: shirtPos.x,
-            top: shirtPos.y,
+            left: transform.position.x,
+            top: transform.position.y,
             transform: `
               translate(-50%, -50%)
-              rotate(${rotation}deg)
-              scale(${scale})
+              rotate(${transform.rotation}deg)
+              scale(${transform.scale})
             `,
-            border: pinching ? "2px solid lime" : "none"
+            border: isPinching ? "2px solid lime" : "none"
           }}
           draggable={false}
         />
 
-        {/* {fingerPos && (
+        {fingerPos && (
           <div
             style={{
               position: "absolute",
               left: fingerPos.x,
               top: fingerPos.y,
-              width: 14,
-              height: 14,
+              width: CURSOR_SIZE,
+              height: CURSOR_SIZE,
               borderRadius: "50%",
-              background: "red",
+              background: isPinching? "lime" : "red",
               transform: "translate(-50%, -50%)",
               pointerEvents: "none",
               zIndex: 10
             }}
           />
-        )} */}
+        )}
 
         <div className="toolbar">
           <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
           <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
           <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
         </div>
+
+        {/* Loading State */}
+        {!isInitialized && !error && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.75)',
+            color: 'white',
+            fontSize: '20px'
+          }}>
+            Initializing camera...
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.75)',
+            color: '#ff4444',
+            fontSize: '20px',
+            textAlign: 'center',
+            padding: '20px'
+          }}>
+            <div>
+              <div style={{ marginBottom: '10px' }}>Camera Error</div>
+              <div style={{ fontSize: '14px' }}>{error}</div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
