@@ -9,7 +9,7 @@ const DWELL_TIME = 500;
 const ROTATION_SPEED = 0.01;
 const SCALE_SPEED = 0.0001;
 const MIN_SCALE = 0.5;
-const MAX_SCALE = 2;
+const MAX_SCALE = 2.5;
 const PINCH_THRESHOLD = 0.05;
 const CURSOR_SIZE = 14;
 
@@ -40,10 +40,13 @@ interface HandLandmark {
   z: number;
 }
 
-interface TransformState {
+interface ClothingItem {
+  id: string;
+  url: string;
   position: Position;
   rotation: number;
   scale: number;
+  name: string;
 }
 
 //// utility functions
@@ -68,6 +71,20 @@ function isPointInElement(
   const bottom = elementRect.bottom - containerRect.top;
 
   return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+}
+
+/**
+ * checks if a point is within a clothing item's bound
+ */
+function isPointInItem(point: Position, item: ClothingItem): boolean {
+  const itemSize = 200 * item.scale;
+  const halfSize = itemSize / 2;
+  return (
+    point.x >= item.position.x - halfSize &&
+    point.x <= item.position.x + halfSize && 
+    point.y >= item.position.y - halfSize && 
+    point.y <= item.position.y + halfSize
+  );
 }
 
 /**
@@ -162,14 +179,12 @@ function useHandTracking(
 //// main component
 function App() {
   //// states
-  const [transform, setTransform] = useState<TransformState>({
-    position: { x: 125, y: 250},
-    rotation: 75,
-    scale: 0.75,
-  });
+  const [clothingItems, setClothingItems] = useState<ClothingItem[]>([]);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [fingerPos, setFingerPos] = useState<Position | null>(null);
   const [isPinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
+  const [showUpload, setShowUpload] = useState(false);
 
   //// refs - dom elements
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -177,9 +192,10 @@ function App() {
   const moveBtnRef = useRef<HTMLDivElement>(null);
   const rotateBtnRef = useRef<HTMLDivElement>(null);
   const scaleBtnRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   //// refs - transform state
-  const transformRef = useRef<TransformState>(transform);
+  const selectedItemRef = useRef<ClothingItem | null>(null);
   const rotationStartRef = useRef<number | null>(null);
   const scaleStartRef = useRef<number | null>(null);
 
@@ -190,10 +206,52 @@ function App() {
   const hoverConsumedRef = useRef(false);
   const wasPinchingRef = useRef(false);
 
-  // keep transformRef in sync with state
+  // keep selecteditemRef in sync with state
   useEffect(() => {
-    transformRef.current = transform;
-  }, [transform]);
+    if (selectedItemId) {
+      const item = clothingItems.find(i => i.id === selectedItemId);
+      selectedItemRef.current = item || null;
+    } else {
+      selectedItemRef.current = null;
+    }
+  }, [selectedItemId, clothingItems]);
+
+  //// file upload handler
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const imageUrl = event.target?.result as string;
+      const newItem: ClothingItem = {
+        id: `item-${Date.now()}`,
+        url: imageUrl,
+        position: { x: 200, y: 200 },
+        rotation: 0,
+        scale: 1,
+        name: file.name,
+      };
+      setClothingItems(prev => [...prev, newItem]);
+      setShowUpload(false);
+    };
+    reader.readAsDataURL(file);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, []);
+
+  //// item selection logic
+  const selectItemAtPosition = useCallback((pos: Position) => {
+    for (let i = clothingItems.length - 1; i >= 0; i--) {
+      if (isPointInItem(pos, clothingItems[i])) {
+        setSelectedItemId(clothingItems[i].id);
+        return;
+      }
+    }
+    setSelectedItemId(null);
+  }, [clothingItems]);
 
   //// tool selection logic
   /**
@@ -248,16 +306,22 @@ function App() {
       rotationStartRef.current = null;
       scaleStartRef.current = null;
     }
+
+    if (!wasPinchingRef.current && isPinching && currentTool === "NONE") {
+      selectItemAtPosition(pos);
+    }
     wasPinchingRef.current = isPinching;
 
-    if (!isPinching) return;
+    if (!isPinching || !selectedItemRef.current) return;
+
+    const selectedItem = selectedItemRef.current;
 
     switch (currentTool) {
       case "MOVE":
-        setTransform((prev) => ({
-          ...prev,
-          position: { x: pos.x, y: pos.y },
-        }));
+        setClothingItems(prev =>
+          prev.map(item =>
+            item.id === selectedItem.id ? { ...item, position: { x: pos.x, y: pos.y } } : item)
+        );
         break;
 
       case "ROTATE": {
@@ -267,12 +331,12 @@ function App() {
         }
 
         const deltaY = pos.y - rotationStartRef.current;
-        const newRotation = transformRef.current.rotation + deltaY * ROTATION_SPEED;
+        const newRotation = selectedItem.rotation + deltaY * ROTATION_SPEED;
 
-        setTransform((prev) => ({
-          ...prev,
-          rotation: newRotation,
-        }));
+        setClothingItems(prev =>
+          prev.map(item =>
+            item.id === selectedItem.id ? { ...item, rotation: newRotation } : item)
+          );
         break;
       }
 
@@ -284,15 +348,15 @@ function App() {
 
         const deltaX = pos.x - scaleStartRef.current;
         const newScale = clamp(
-          transformRef.current.scale + deltaX * SCALE_SPEED, 
+          selectedItem.scale + deltaX * SCALE_SPEED, 
           MIN_SCALE,
           MAX_SCALE
         );
 
-        setTransform((prev) => ({
-          ...prev,
-          scale: newScale,
-        }));
+        setClothingItems(prev =>
+          prev.map(item =>
+            item.id === selectedItem.id ? {...item, scale: newScale } : item)
+          );
         break;
       }
     }
@@ -329,22 +393,28 @@ function App() {
     <div className="app-wrapper">
       <div ref={containerRef} className="video-container">
         <video ref={videoRef} autoPlay playsInline />
-        <img
-          src={shirtImage}
-          className="shirt"
-          style={{
-            left: transform.position.x,
-            top: transform.position.y,
-            transform: `
-              translate(-50%, -50%)
-              rotate(${transform.rotation}deg)
-              scale(${transform.scale})
-            `,
-            border: isPinching ? "2px solid lime" : "none"
-          }}
-          draggable={false}
-        />
 
+        {/* Render clothing items */}
+        {clothingItems.map(item => (
+          <img
+            key={item.id}
+            src={item.url}
+            className="clothing-item"
+            style={{
+              position: "absolute",
+              left: item.position.x,
+              top: item.position.y,
+              transform: `
+                translate(-50%, -50%)
+                rotate(${item.rotation}deg)
+                scale(${item.scale})
+              `,
+            }}
+            draggable={false}
+            />
+        ))}
+
+        {/* Finger cursor */}
         {fingerPos && (
           <div
             style={{
@@ -362,11 +432,56 @@ function App() {
           />
         )}
 
+        {/* Toolbar */}
         <div className="toolbar">
           <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
           <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
           <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
         </div>
+
+        {/* Upload button */}
+        <div className="upload-controls">
+          <button
+            className="upload-btn"
+            onClick={() => setShowUpload(!showUpload)}
+          >
+            Add Item
+          </button>
+          {showUpload && (
+            <div className="upload-panel">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+              <button
+                className="upload-option"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Upload from Device
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Items list */}
+        {clothingItems.length > 0 && (
+          <div className="items-list">
+            <div className="items-header">Items: ({clothingItems.length})</div>
+            {clothingItems.map(item => (
+              <div
+                key={item.id}
+                className={`item-card ${selectedItemId === item.id ? "selected" : ""}`}
+                onClick={() => setSelectedItemId(item.id)}
+              >
+                <img src={item.url} alt={item.name}/>
+                <span>{item.name.slice(0, 15)}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Loading State */}
         {!isInitialized && !error && (

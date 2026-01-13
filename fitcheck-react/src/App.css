@@ -5,6 +5,7 @@ body {
   justify-content: center;
   align-items: center;
   height: 100vh;
+  font-family: system-ui, -apple-system, sans-serif;
 }
 
 .app-wrapper {
@@ -19,6 +20,7 @@ body {
   max-width: 960px;
   aspect-ratio: 4 /3 ;
   background: #222;
+  border-radius: 12px;
 }
 
 video {
@@ -26,15 +28,6 @@ video {
   height: 100%;
   object-fit: contain;
   transform: scaleX(-1);
-}
-
-.shirt {
-  position: absolute;
-  width: 200px;
-  z-index: 2;
-  pointer-events: none;
-  user-select: none;
-  transform-origin: center center;
 }
 
 .toolbar {
@@ -61,4 +54,109 @@ video {
 .tool.active {
   background: limegreen;
   color: black;
+}
+
+.upload-controls {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 4;
+}
+
+.upload-btn {
+  padding: 12px 20px;
+  background: rgb(50, 150, 255);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.upload-btn:hover {
+  transform: scale(1.05);
+  background: rgb(70, 170, 255);
+}
+
+.upload-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  background: rgb(40, 40, 40);
+  border-radius: 8px;
+  width: 160px;
+}
+
+.upload-option {
+  width: 100%;
+  padding: 12px;
+  background: rgb(80, 80, 80);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.upload-option:hover {
+  transform: scale(1.05);
+  background: rgb(100, 100, 100);
+}
+
+.items-list {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  background: rgb(40, 40, 40);
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 300px;
+  max-height: 150px;
+  z-index: 4;
+}
+
+.items-header {
+  color: white;
+  font-weight: bold;
+  font-size: 12px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.item-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: rgb(80, 80, 80);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.item-card:hover {
+  background: rgb(100, 100, 100);
+}
+
+.item-card.selected {
+  border-color: limegreen;
+  background: rgb(50, 205, 50);
+}
+
+.item-card img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgb(255, 255, 255);
+}
+
+.item-card span {
+  color: white;
+  font-size: 12px;
+  flex: 1;
 }
