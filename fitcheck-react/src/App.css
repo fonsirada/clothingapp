@@ -160,3 +160,29 @@ video {
   font-size: 12px;
   flex: 1;
 }
+
+.mode-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  z-index: 4;
+}
+
+.mode-btn {
+  padding: 10px 16px;
+  background: rgb(60, 60, 60);
+  color: white;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  background: cyan;
+  border-color: white;
+  transform: scale(1.05);
+}

@@ -1,24 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Hands } from "@mediapipe/hands";
+import { Pose } from "@mediapipe/pose";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
-import shirtImage from "./assets/shirt.png";
 
 //// constants
 const DWELL_TIME = 500;
 const ROTATION_SPEED = 0.01;
 const SCALE_SPEED = 0.0001;
-const MIN_SCALE = 0.5;
+const MIN_SCALE = 0.005;
 const MAX_SCALE = 2.5;
 const PINCH_THRESHOLD = 0.05;
 const CURSOR_SIZE = 14;
 
-const MEDIAPIPE_CONFIG = {
+const HANDS_CONFIG = {
   maxNumHands: 1,
   modelComplexity: 1,
   minDetectionConfidence: 0.7,
   minTrackingConfidence: 0.7,
-  selfieMode: true,
+  selfieMode: true
+};
+
+const POSE_CONFIG = {
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
 };
 
 const CAMERA_CONFIG = {
@@ -28,6 +35,7 @@ const CAMERA_CONFIG = {
 
 //// types
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
+type Mode = "HAND" | "BODY";
 
 interface Position {
   x: number;
@@ -102,12 +110,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-// hand tracking
-function useHandTracking(
+// hand & body tracking hook
+function useTracking(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   containerRef: React.RefObject<HTMLDivElement | null>,
+  mode: Mode,
   onHandDetected: (fingerPos: Position, isPinching: boolean) => void,
-  onNoHand: () => void
+  onNoHand: () => void,
+  onPoseDetected: (landmarks: any) => void,
+  onNoPose: () => void
 ) {
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,18 +127,21 @@ function useHandTracking(
     if (!videoRef.current) return;
 
     let hands: Hands | null = null;
+    let pose: Pose | null = null;
     let camera: Camera | null = null;
 
-    const initializeTracking = async () => {
+    const initializeTracking = async() => {
       try {
+        // initialize hands tracking
         hands = new Hands({
           locateFile: (file) =>
             `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
-        hands.setOptions(MEDIAPIPE_CONFIG);
+        hands.setOptions(HANDS_CONFIG);
         
         hands.onResults((results) => {
           if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+            // no hands detected
             onNoHand();
             return;
           }
@@ -148,10 +162,31 @@ function useHandTracking(
           onHandDetected(fingerPos, isPinching);
         });
 
+        // initialize body tracking
+        pose = new Pose({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        pose.setOptions(POSE_CONFIG);
+
+        pose.onResults((results) => {
+          // no body detected
+          if (!results.poseLandmarks) {
+            onNoPose();
+            return;
+          }
+          onPoseDetected(results.poseLandmarks);
+        });
+
+        // send camera frames
         camera = new Camera(videoRef.current!, {
           onFrame: async () => {
             if (videoRef.current && videoRef.current.readyState >= 2) {
-              await hands!.send({ image: videoRef.current! });
+              if (mode == "HAND") {
+                await hands!.send({ image: videoRef.current! });
+              } else {
+                await pose!.send({ image: videoRef.current! });
+              }
             }
           },
           width: CAMERA_CONFIG.width,
@@ -161,19 +196,20 @@ function useHandTracking(
         await camera.start();
         setIsInitialized(true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to initialize camera");
-        console.error("Hand tracking initialization error:", err);
+        setError(err instanceof Error ? err.message : "Failed to initialize tracking");
+        console.error("Tracking initialization error:", err);
       }
     };
-
+    
     initializeTracking();
     return () => {
       camera?.stop();
       hands?.close();
+      pose?.close();
     };
-  }, [videoRef, containerRef, onHandDetected, onNoHand]);
+  }, [videoRef, containerRef, mode, onHandDetected, onNoHand, onPoseDetected, onNoPose]);
 
-  return {isInitialized, error};
+  return { isInitialized, error };
 }
 
 //// main component
@@ -185,6 +221,8 @@ function App() {
   const [isPinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
   const [showUpload, setShowUpload] = useState(false);
+  const [bodyLandmarks, setBodyLandmarks] = useState<any>(null);
+  const [mode, setMode] = useState<Mode>("HAND");
 
   //// refs - dom elements
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -381,11 +419,22 @@ function App() {
     scaleStartRef.current = null;
   }, []);
 
-  const { isInitialized, error } = useHandTracking(
+  const handlePoseDetected = useCallback((landmarks: any) => {
+    setBodyLandmarks(landmarks);
+  }, []);
+
+  const handleNoPose = useCallback(() => {
+    setBodyLandmarks(null);
+  }, []);
+
+  const { isInitialized, error } = useTracking(
     videoRef,
     containerRef,
+    mode,
     handleHandDetected,
-    handleNoHand
+    handleNoHand,
+    handlePoseDetected,
+    handleNoPose
   );
 
   //// render
@@ -432,11 +481,56 @@ function App() {
           />
         )}
 
+        {/* Body landmarks */}
+        {bodyLandmarks && containerRef.current && mode === "BODY" && (
+          <>
+            {bodyLandmarks.map((landmark: any, index: number) => {
+              const containerRect = containerRef.current!.getBoundingClientRect();
+              const x = landmark.x * containerRect.width;
+              const y = landmark.y * containerRect.height;
+
+              return (
+                <div
+                  key={index}
+                  style={{
+                    position: "absolute",
+                    left: x,
+                    top: y,
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: "cyan",
+                    transform: "translate(-50%, -50%)",
+                    pointerEvents: "none",
+                    zIndex: 5
+                  }}
+                />
+              );
+            })}
+          </>
+        )}
+
         {/* Toolbar */}
         <div className="toolbar">
           <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
           <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
           <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
+        </div>
+
+        {/* Mode toggle button */}
+        <div className="mode-toggle">
+          <button
+            className={`mode-btn ${mode === "HAND" ? "active" : ""}`}
+            onClick={() => setMode("HAND")}
+          >
+            Hand Mode
+          </button>
+          <button
+            className={`mode-btn ${mode === "BODY" ? "active" : ""}`}
+            onClick={() => setMode("BODY")}
+          >
+            Body Mode
+          </button>
         </div>
 
         {/* Upload button */}
