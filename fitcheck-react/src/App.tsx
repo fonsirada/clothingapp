@@ -4,6 +4,15 @@ import { Pose } from "@mediapipe/pose";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 
+// plan:
+// - choose a clothing item (shirt, color) -> display the shirt side-by-side camera
+// - upload a design (logo) -> display logo on top of shirt
+// - adjust design using hands/mouse? (have presets -> left chest/ right chest/ center chest)
+// - create a new image with the design placed onto the shirt and display it on camera with user
+// - snap the clothing item to follow the user (try-on phase)
+
+
+
 //// constants
 const DWELL_TIME = 500;
 const ROTATION_SPEED = 0.01;
@@ -741,7 +750,7 @@ function App() {
             className="upload-btn"
             onClick={() => setShowUpload(!showUpload)}
           >
-            Add Item
+            Upload Design
           </button>
           {showUpload && (
             <div className="upload-panel">
@@ -763,21 +772,19 @@ function App() {
         </div>
 
         {/* Items list */}
-        {clothingItems.length > 0 && (
-          <div className="items-list">
-            <div className="items-header">Items: ({clothingItems.length})</div>
-            {clothingItems.map(item => (
-              <div
-                key={item.id}
-                className={`item-card ${selectedItemId === item.id ? "selected" : ""}`}
-                onClick={() => setSelectedItemId(item.id)}
-              >
-                <img src={item.url} alt={item.name}/>
-                <span>{item.name.slice(0, 15)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="items-list">
+          <div className="items-header">Choose a clothing item:</div>
+          {clothingItems.map(item => (
+            <div
+              key={item.id}
+              className={`item-card ${selectedItemId === item.id ? "selected" : ""}`}
+              onClick={() => setSelectedItemId(item.id)}
+            >
+              <img src={item.url} alt={item.name}/>
+              <span>{item.name.slice(0, 15)}</span>
+            </div>
+          ))}
+        </div>
 
         {/* Loading State */}
         {!isInitialized && !error && (
