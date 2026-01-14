@@ -110,6 +110,68 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * extract key body points from pose landmarks
+ */
+function getKeyBodyPoints(landmarks: any, containerRect: DOMRect) {
+  return {
+    nose: {
+      x: containerRect.width - (landmarks[0].x * containerRect.width),
+      y: landmarks[0].y * containerRect.height
+    },
+    leftShoulder: {
+      x: containerRect.width - (landmarks[11].x * containerRect.width),
+      y: landmarks[11].y * containerRect.height
+    },
+    rightShoulder: {
+      x: containerRect.width - (landmarks[12].x * containerRect.width),
+      y: landmarks[12].y * containerRect.height
+    },
+    leftHip: {
+      x: containerRect.width - (landmarks[23].x * containerRect.width),
+      y: landmarks[23].y * containerRect.height
+    },
+    rightHip: {
+      x: containerRect.width - (landmarks[24].x * containerRect.width),
+      y: landmarks[24].y * containerRect.height
+    }
+  };
+}
+
+/**
+ * calculate body measurements for clothing placement
+ */
+function calculateBodyMeasurements(keyPoints: ReturnType<typeof getKeyBodyPoints>) {
+  const { leftShoulder, rightShoulder, leftHip, rightHip } = keyPoints;
+
+  const shoulderWidth = Math.hypot(
+    rightShoulder.x - leftShoulder.x,
+    rightShoulder.y - leftShoulder.y
+  );
+
+  const chestCenter = {
+    x: (leftShoulder.x + rightShoulder.x) / 2,
+    y: (leftShoulder.y + rightShoulder.y) / 2
+  };
+
+  const shoulderAngle = Math.atan2(
+    rightShoulder.y - leftShoulder.y,
+    rightShoulder.x - leftShoulder.x
+  ) * (180 / Math.PI);
+
+  const torsoHeight = Math.hypot(
+    chestCenter.x - (leftHip.x + rightHip.x) / 2,
+    chestCenter.y - (leftHip.y = rightHip.y) / 2
+  );
+
+  return {
+    shoulderWidth,
+    chestCenter,
+    shoulderAngle,
+    torsoHeight
+  };
+}
+
 // hand & body tracking hook
 function useTracking(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -223,6 +285,7 @@ function App() {
   const [showUpload, setShowUpload] = useState(false);
   const [bodyLandmarks, setBodyLandmarks] = useState<any>(null);
   const [mode, setMode] = useState<Mode>("HAND");
+  const [bodyMeasurements, setBodyMeasurements] = useState<any>(null);
 
   //// refs - dom elements
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -236,6 +299,7 @@ function App() {
   const selectedItemRef = useRef<ClothingItem | null>(null);
   const rotationStartRef = useRef<number | null>(null);
   const scaleStartRef = useRef<number | null>(null);
+  const baseShoulderWidthRef = useRef<number | null>(null);
 
   //// refs - tool selection
   const activeToolRef = useRef<Tool>("NONE");
@@ -253,6 +317,43 @@ function App() {
       selectedItemRef.current = null;
     }
   }, [selectedItemId, clothingItems]);
+
+  // capturing base shoulder width when entering body mode
+  useEffect(() => {
+    if (mode === "BODY" && bodyMeasurements && baseShoulderWidthRef.current === null) {
+      baseShoulderWidthRef.current = bodyMeasurements.shoulderWidth;
+    }
+
+    if (mode === "HAND") {
+      baseShoulderWidthRef.current = null;
+    }
+  }, [mode, bodyMeasurements]);
+
+  // auto-position clothing item on body
+  useEffect(() => {
+    if (mode === "BODY" && bodyMeasurements && selectedItemId) {
+      const selectedItem = clothingItems.find(item => item.id === selectedItemId);
+      if (selectedItem && baseShoulderWidthRef.current) {
+        const scaleFactor = bodyMeasurements.shoulderWidth / baseShoulderWidthRef.current;
+        const newScale = selectedItem.scale * scaleFactor;
+
+        setClothingItems(prev =>
+          prev.map(item => item.id === selectedItemId ?
+            {
+              ...item,
+              position: {
+                x: bodyMeasurements.chestCenter.x,
+                y: bodyMeasurements.chestCenter.y + 100
+              },
+              rotation: bodyMeasurements.shoulderAngle,
+              scale: newScale
+            }
+            : item
+          )
+        );
+      }
+    }
+  }, [mode, bodyMeasurements, selectedItemId]);
 
   //// file upload handler
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -421,6 +522,13 @@ function App() {
 
   const handlePoseDetected = useCallback((landmarks: any) => {
     setBodyLandmarks(landmarks);
+
+    if (containerRef.current) {
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const keyPoints = getKeyBodyPoints(landmarks, containerRect);
+      const measurements = calculateBodyMeasurements(keyPoints);
+      setBodyMeasurements(measurements);
+    }
   }, []);
 
   const handleNoPose = useCallback(() => {
@@ -464,7 +572,7 @@ function App() {
         ))}
 
         {/* Finger cursor */}
-        {fingerPos && (
+        {fingerPos && mode === "HAND" && (
           <div
             style={{
               position: "absolute",
@@ -482,11 +590,11 @@ function App() {
         )}
 
         {/* Body landmarks */}
-        {bodyLandmarks && containerRef.current && mode === "BODY" && (
+        {bodyLandmarks && bodyMeasurements && containerRef.current && mode === "BODY" && (
           <>
             {bodyLandmarks.map((landmark: any, index: number) => {
               const containerRect = containerRef.current!.getBoundingClientRect();
-              const x = landmark.x * containerRect.width;
+              const x = containerRect.width - (landmark.x * containerRect.width);
               const y = landmark.y * containerRect.height;
 
               return (
@@ -507,6 +615,100 @@ function App() {
                 />
               );
             })}
+
+            {/* key points */}
+            {(() => {
+              const containerRect = containerRef.current!.getBoundingClientRect();
+              const keyPoints = getKeyBodyPoints(bodyLandmarks, containerRect);
+              
+              return (
+                <>
+                  {/* Left Shoulder */}
+                  <div style={{
+                    position: "absolute",
+                    left: keyPoints.leftShoulder.x,
+                    top: keyPoints.leftShoulder.y,
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    background: "lime",
+                    border: "2px solid white",
+                    transform: "translate(-50%, -50%)",
+                    pointerEvents: "none",
+                    zIndex: 6,
+                  }} />
+                  
+                  {/* Right Shoulder */}
+                  <div style={{
+                    position: "absolute",
+                    left: keyPoints.rightShoulder.x,
+                    top: keyPoints.rightShoulder.y,
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    background: "lime",
+                    border: "2px solid white",
+                    transform: "translate(-50%, -50%)",
+                    pointerEvents: "none",
+                    zIndex: 6,
+                  }} />
+                  
+                  {/* Chest Center */}
+                  <div style={{
+                    position: "absolute",
+                    left: bodyMeasurements.chestCenter.x,
+                    top: bodyMeasurements.chestCenter.y,
+                    width: 16,
+                    height: 16,
+                    borderRadius: "50%",
+                    background: "yellow",
+                    border: "3px solid white",
+                    transform: "translate(-50%, -50%)",
+                    pointerEvents: "none",
+                    zIndex: 7,
+                  }} />
+                  
+                  {/* Shoulder line */}
+                  <svg style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: "100%",
+                    height: "100%",
+                    pointerEvents: "none",
+                    zIndex: 5,
+                  }}>
+                    <line
+                      x1={keyPoints.leftShoulder.x}
+                      y1={keyPoints.leftShoulder.y}
+                      x2={keyPoints.rightShoulder.x}
+                      y2={keyPoints.rightShoulder.y}
+                      stroke="lime"
+                      strokeWidth="3"
+                    />
+                  </svg>
+                </>
+              );
+            })()}
+
+            {/* Measurement display */}
+            <div style={{
+              position: "absolute",
+              top: 10,
+              left: 10,
+              background: "rgba(0, 0, 0, 0.8)",
+              color: "white",
+              padding: "10px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontFamily: "monospace",
+              zIndex: 10,
+            }}>
+              <div>Shoulder Width: {Math.round(bodyMeasurements.shoulderWidth)}px</div>
+              <div>Shoulder Angle: {Math.round(bodyMeasurements.shoulderAngle)}°</div>
+              <div>Torso Height: {Math.round(bodyMeasurements.torsoHeight)}px</div>
+              <div>Chest Center: ({Math.round(bodyMeasurements.chestCenter.x)}, {Math.round(bodyMeasurements.chestCenter.y)})</div>
+            </div>
           </>
         )}
 
