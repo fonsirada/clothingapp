@@ -4,14 +4,14 @@ import { Pose } from "@mediapipe/pose";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 
+import BLACK_TSHIRT from "./assets/shirt.png";
+
 // plan:
 // - choose a clothing item (shirt, color) -> display the shirt side-by-side camera
 // - upload a design (logo) -> display logo on top of shirt
 // - adjust design using hands/mouse? (have presets -> left chest/ right chest/ center chest)
 // - create a new image with the design placed onto the shirt and display it on camera with user
 // - snap the clothing item to follow the user (try-on phase)
-
-
 
 //// constants
 const DWELL_TIME = 500;
@@ -42,9 +42,18 @@ const CAMERA_CONFIG = {
   height: 720
 };
 
+const TEMPLATES: Template[] = [
+  {
+    id: "tshirt-black",
+    url: BLACK_TSHIRT,
+    name: "Black T-Shirt"
+  },
+  // add more
+]
+
 //// types
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
-type Mode = "HAND" | "BODY";
+type Mode = "DESIGN" | "TRYON_HAND" | "TRYON_BODY";
 
 interface Position {
   x: number;
@@ -57,13 +66,25 @@ interface HandLandmark {
   z: number;
 }
 
-interface ClothingItem {
+interface Template {
   id: string;
+  url: string;
+  name: string;
+}
+
+interface Design {
+  url: string;
+  name: string;
+  position: Position;
+  rotation: number;
+  scale: number;
+}
+
+interface CompositeImage {
   url: string;
   position: Position;
   rotation: number;
   scale: number;
-  name: string;
 }
 
 //// utility functions
@@ -90,19 +111,19 @@ function isPointInElement(
   return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
 }
 
-/**
- * checks if a point is within a clothing item's bound
- */
-function isPointInItem(point: Position, item: ClothingItem): boolean {
-  const itemSize = 200 * item.scale;
-  const halfSize = itemSize / 2;
-  return (
-    point.x >= item.position.x - halfSize &&
-    point.x <= item.position.x + halfSize && 
-    point.y >= item.position.y - halfSize && 
-    point.y <= item.position.y + halfSize
-  );
-}
+// /**
+//  * checks if a point is within a clothing item's bound
+//  */
+// function isPointInItem(point: Position, item: ClothingItem): boolean {
+//   const itemSize = 200 * item.scale;
+//   const halfSize = itemSize / 2;
+//   return (
+//     point.x >= item.position.x - halfSize &&
+//     point.x <= item.position.x + halfSize && 
+//     point.y >= item.position.y - halfSize && 
+//     point.y <= item.position.y + halfSize
+//   );
+// }
 
 /**
  * detects pinching with distance between thumb and index finger
@@ -195,7 +216,7 @@ function useTracking(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || mode === "DESIGN") return;
 
     let hands: Hands | null = null;
     let pose: Pose | null = null;
@@ -253,9 +274,9 @@ function useTracking(
         camera = new Camera(videoRef.current!, {
           onFrame: async () => {
             if (videoRef.current && videoRef.current.readyState >= 2) {
-              if (mode == "HAND") {
+              if (mode == "TRYON_HAND") {
                 await hands!.send({ image: videoRef.current! });
-              } else {
+              } else if (mode === "TRYON_BODY") {
                 await pose!.send({ image: videoRef.current! });
               }
             }
@@ -286,29 +307,39 @@ function useTracking(
 //// main component
 function App() {
   //// states
-  const [clothingItems, setClothingItems] = useState<ClothingItem[]>([]);
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [design, setDesign] = useState<Design | null> (null);
+  const [compositeImage, setCompositeImage] = useState<CompositeImage | null>(null);
+  const [mode, setMode] = useState<Mode>("DESIGN");
+
   const [fingerPos, setFingerPos] = useState<Position | null>(null);
   const [isPinching, setPinching] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("NONE");
-  const [showUpload, setShowUpload] = useState(false);
+
   const [bodyLandmarks, setBodyLandmarks] = useState<any>(null);
-  const [mode, setMode] = useState<Mode>("HAND");
   const [bodyMeasurements, setBodyMeasurements] = useState<any>(null);
+
+  // const [showUpload, setShowUpload] = useState(false);
 
   //// refs - dom elements
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const wardrobeRef = useRef<HTMLDivElement>(null);
   const moveBtnRef = useRef<HTMLDivElement>(null);
   const rotateBtnRef = useRef<HTMLDivElement>(null);
   const scaleBtnRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   //// refs - transform state
-  const selectedItemRef = useRef<ClothingItem | null>(null);
+  const designRef = useRef<Design | null>(null);
+  const compositeRef = useRef<CompositeImage | null>(null);
   const rotationStartRef = useRef<number | null>(null);
   const scaleStartRef = useRef<number | null>(null);
+
+  //// refs - body tracking
   const baseShoulderWidthRef = useRef<number | null>(null);
+  const smoothedScaleRef = useRef(0);
+  const originalScaleRef = useRef(1);
 
   //// refs - tool selection
   const activeToolRef = useRef<Tool>("NONE");
@@ -317,54 +348,16 @@ function App() {
   const hoverConsumedRef = useRef(false);
   const wasPinchingRef = useRef(false);
 
-  // keep selecteditemRef in sync with state
+  // sync refs
   useEffect(() => {
-    if (selectedItemId) {
-      const item = clothingItems.find(i => i.id === selectedItemId);
-      selectedItemRef.current = item || null;
-    } else {
-      selectedItemRef.current = null;
-    }
-  }, [selectedItemId, clothingItems]);
+    designRef.current = design;
+  }, [design]);
 
-  // capturing base shoulder width when entering body mode
   useEffect(() => {
-    if (mode === "BODY" && bodyMeasurements && baseShoulderWidthRef.current === null) {
-      baseShoulderWidthRef.current = bodyMeasurements.shoulderWidth;
-    }
+    compositeRef.current = compositeImage;
+  }, [compositeImage]);
 
-    if (mode === "HAND") {
-      baseShoulderWidthRef.current = null;
-    }
-  }, [mode, bodyMeasurements]);
-
-  // auto-position clothing item on body
-  useEffect(() => {
-    if (mode === "BODY" && bodyMeasurements && selectedItemId) {
-      const selectedItem = clothingItems.find(item => item.id === selectedItemId);
-      if (selectedItem && baseShoulderWidthRef.current) {
-        const scaleFactor = bodyMeasurements.shoulderWidth / baseShoulderWidthRef.current;
-        const newScale = selectedItem.scale * scaleFactor;
-
-        setClothingItems(prev =>
-          prev.map(item => item.id === selectedItemId ?
-            {
-              ...item,
-              position: {
-                x: bodyMeasurements.chestCenter.x,
-                y: bodyMeasurements.chestCenter.y + 100
-              },
-              rotation: bodyMeasurements.shoulderAngle,
-              scale: newScale
-            }
-            : item
-          )
-        );
-      }
-    }
-  }, [mode, bodyMeasurements, selectedItemId]);
-
-  //// file upload handler
+  //// file upload handler - alter this since we're only upload designs now, not clothing items
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -372,16 +365,15 @@ function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const imageUrl = event.target?.result as string;
-      const newItem: ClothingItem = {
-        id: `item-${Date.now()}`,
+      const newDesign: Design = {
         url: imageUrl,
-        position: { x: 200, y: 200 },
+        position: { x: 1000, y: 300 },
         rotation: 0,
         scale: 1,
         name: file.name,
       };
-      setClothingItems(prev => [...prev, newItem]);
-      setShowUpload(false);
+      setDesign(newDesign);
+      //setShowUpload(false);
     };
     reader.readAsDataURL(file);
 
@@ -390,31 +382,69 @@ function App() {
     }
   }, []);
 
-  //// item selection logic
-  const selectItemAtPosition = useCallback((pos: Position) => {
-    for (let i = clothingItems.length - 1; i >= 0; i--) {
-      if (isPointInItem(pos, clothingItems[i])) {
-        setSelectedItemId(clothingItems[i].id);
-        return;
-      }
-    }
-    setSelectedItemId(null);
-  }, [clothingItems]);
+  //// save composite image (template with user design) - fix this
+  const handleSaveComposite = useCallback(() => {
+    if (!selectedTemplate || !design || !wardrobeRef.current) return;
+
+    // Create a canvas to combine shirt + logo
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Set canvas size to match wardrobe container // should prob match same container as template item
+    const rect = wardrobeRef.current.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+
+    const shirtImg = new Image();
+    shirtImg.src = selectedTemplate.url;
+
+    shirtImg.onload = () => {
+      // Draw shirt
+      ctx.drawImage(shirtImg, 0, 0, canvas.width, canvas.height);
+
+      // Draw logo
+      const logoImg = new Image();
+      logoImg.src = design.url;
+
+      logoImg.onload = () => {
+        ctx.save();
+        ctx.translate(design.position.x, design.position.y);
+        ctx.rotate((design.rotation * Math.PI) / 180);
+        ctx.scale(design.scale, design.scale);
+        ctx.drawImage(logoImg, -logoImg.width / 2, -logoImg.height / 2);
+        ctx.restore();
+
+        // Save as composite
+        const compositeUrl = canvas.toDataURL('image/png');
+        setCompositeImage({
+          url: compositeUrl,
+          position: { x: 400, y: 300 },  // Center of video
+          rotation: 0,
+          scale: 1,
+        });
+        
+        // Switch to try-on mode
+        setMode("TRYON_HAND");
+      };
+    };
+  }, [selectedTemplate, design]);
 
   //// tool selection logic
   /**
-   * determines which tool button is currently being hovered over
+   * determines which tool button is currently being hovered over -- will tweak this later (preset design positions)
    */
   const getHoveredTool = useCallback(
     (pos: Position, isPinching: boolean): Tool => {
       if (isPinching) return "NONE";
 
-      if (isPointInElement(pos, moveBtnRef.current, containerRef.current)) return "MOVE";
-      else if (isPointInElement(pos, rotateBtnRef.current, containerRef.current)) return "ROTATE";
-      else if (isPointInElement(pos, scaleBtnRef.current, containerRef.current)) return "SCALE";
+      const container = mode === "DESIGN" ? wardrobeRef.current : containerRef.current;
+      if (isPointInElement(pos, moveBtnRef.current, container)) return "MOVE";
+      else if (isPointInElement(pos, rotateBtnRef.current, container)) return "ROTATE";
+      else if (isPointInElement(pos, scaleBtnRef.current, container)) return "SCALE";
       
       return "NONE";
-    }, []
+    }, [mode]
   );
 
   /**
@@ -445,7 +475,7 @@ function App() {
 
   //// tool execution logic
   /**
-   * executes the currently active tool based on finger position and pinch state
+   * executes the currently active tool based on finger position and pinch state - alter this only gonna have 1 item at a time
    */
   const executeActiveTool = useCallback((pos: Position, isPinching: boolean) => {
     const currentTool = activeToolRef.current;
@@ -454,62 +484,83 @@ function App() {
       rotationStartRef.current = null;
       scaleStartRef.current = null;
     }
-
-    if (!wasPinchingRef.current && isPinching && currentTool === "NONE") {
-      selectItemAtPosition(pos);
-    }
     wasPinchingRef.current = isPinching;
 
-    if (!isPinching || !selectedItemRef.current) return;
+    if (!isPinching) return;
 
-    const selectedItem = selectedItemRef.current;
+    // design mode: manipulate logo
+    if (mode === "DESIGN" && design) {
+      switch (currentTool) {
+        case "MOVE":
+          setDesign(prev => prev ? { ...prev, position: pos } : null);
+          break;
 
-    switch (currentTool) {
-      case "MOVE":
-        setClothingItems(prev =>
-          prev.map(item =>
-            item.id === selectedItem.id ? { ...item, position: { x: pos.x, y: pos.y } } : item)
-        );
-        break;
-
-      case "ROTATE": {
-        if (rotationStartRef.current === null) {
-          rotationStartRef.current = pos.y;
-          return;
+        case "ROTATE": {
+          if (rotationStartRef.current === null) {
+            rotationStartRef.current = pos.y;
+            return;
+          }
+          const deltaY = pos.y - rotationStartRef.current;
+          setDesign(prev => prev ? {
+            ...prev,
+            rotation: prev.rotation + deltaY * ROTATION_SPEED
+          } : null);
+          break;
         }
 
-        const deltaY = pos.y - rotationStartRef.current;
-        const newRotation = selectedItem.rotation + deltaY * ROTATION_SPEED;
+        case "SCALE": {
+          if (scaleStartRef.current === null) {
+            scaleStartRef.current = pos.x;
+            return;
+          }
 
-        setClothingItems(prev =>
-          prev.map(item =>
-            item.id === selectedItem.id ? { ...item, rotation: newRotation } : item)
-          );
-        break;
-      }
-
-      case "SCALE": {
-        if (scaleStartRef.current === null) {
-          scaleStartRef.current = pos.x;
-          return;
+          const deltaX = pos.x - scaleStartRef.current;
+          setDesign(prev => prev ? {
+            ...prev,
+            scale: clamp(prev.scale + deltaX * SCALE_SPEED, MIN_SCALE, MAX_SCALE)
+          } : null);
+          break;
         }
-
-        const deltaX = pos.x - scaleStartRef.current;
-        const newScale = clamp(
-          selectedItem.scale + deltaX * SCALE_SPEED, 
-          MIN_SCALE,
-          MAX_SCALE
-        );
-
-        setClothingItems(prev =>
-          prev.map(item =>
-            item.id === selectedItem.id ? {...item, scale: newScale } : item)
-          );
-        break;
       }
     }
-  }, []);
 
+    if (mode === "TRYON_HAND" && compositeImage) {
+      switch (currentTool) {
+        case "MOVE":
+          setCompositeImage(prev => prev ? { ...prev, position: pos } : null);
+          break;
+
+        case "ROTATE": {
+          if (rotationStartRef.current === null) {
+            rotationStartRef.current = pos.y;
+            return;
+          }
+          const deltaY = pos.y - rotationStartRef.current;
+          setCompositeImage(prev => prev ? {
+            ...prev,
+            rotation: prev.rotation + deltaY * ROTATION_SPEED
+          } : null);
+          break;
+        }
+
+        case "SCALE": {
+          if (scaleStartRef.current === null) {
+            scaleStartRef.current = pos.x;
+            return;
+          }
+
+          const deltaX = pos.x - scaleStartRef.current;
+          setCompositeImage(prev => prev ? {
+            ...prev,
+            scale: clamp(prev.scale + deltaX * SCALE_SPEED, MIN_SCALE, MAX_SCALE)
+          } : null);
+          break;
+        }
+      }
+    }
+  }, [mode, design, compositeImage]);
+
+  //// hand tracking callbacks
   const handleHandDetected = useCallback(
     (pos: Position, isPinching: boolean) => {
       setFingerPos(pos);
@@ -529,6 +580,7 @@ function App() {
     scaleStartRef.current = null;
   }, []);
 
+  // body tracking callbacks
   const handlePoseDetected = useCallback((landmarks: any) => {
     setBodyLandmarks(landmarks);
 
@@ -544,6 +596,43 @@ function App() {
     setBodyLandmarks(null);
   }, []);
 
+  //// capturing base shoulder width when entering body mode
+  useEffect(() => {
+    if (mode === "TRYON_BODY" && bodyMeasurements && baseShoulderWidthRef.current === null) {
+      baseShoulderWidthRef.current = bodyMeasurements.shoulderWidth;
+      
+      if (compositeImage) {
+        originalScaleRef.current = compositeImage.scale;
+        smoothedScaleRef.current = compositeImage.scale;
+      }
+    }
+
+    if (mode !== "TRYON_BODY") {
+      baseShoulderWidthRef.current = null;
+    }
+  }, [mode, bodyMeasurements, compositeImage]);
+
+  //// auto-position clothing item on body
+  useEffect(() => {
+    if (mode === "TRYON_BODY" && bodyMeasurements && compositeImage) {
+        const scaleFactor = clamp(bodyMeasurements.shoulderWidth / baseShoulderWidthRef.current, 0.5, 3.0);
+        const targetScale = originalScaleRef.current * scaleFactor;
+
+        smoothedScaleRef.current = smoothedScaleRef.current + (targetScale - smoothedScaleRef.current) * 0.2;
+
+        // change this to only change the selected item (only gonna be 1 at a time now)
+        setCompositeImage(prev => prev ? {
+          ...prev,
+          position: {
+            x: bodyMeasurements.chestCenter.x,
+            y: bodyMeasurements.chestCenter.y + 100
+          },
+          rotation: bodyMeasurements.shoulderAngle,
+          scale: smoothedScaleRef.current
+        } : null);
+    }
+  }, [mode, bodyMeasurements, compositeImage]);
+
   const { isInitialized, error } = useTracking(
     videoRef,
     containerRef,
@@ -557,31 +646,33 @@ function App() {
   //// render
   return (
     <div className="app-wrapper">
-      <div ref={containerRef} className="video-container">
+
+      {/* VIDEO / TRYON VIEW */}
+      <div ref={containerRef} className="content-box video-container">
         <video ref={videoRef} autoPlay playsInline />
 
-        {/* Render clothing items */}
-        {clothingItems.map(item => (
+        {/* Composite image on camera */}
+        {compositeImage && (
           <img
-            key={item.id}
-            src={item.url}
-            className="clothing-item"
+            src="{compositeImage.url}"
             style={{
               position: "absolute",
-              left: item.position.x,
-              top: item.position.y,
+              left: compositeImage.position.x,
+              top: compositeImage.position.y,
               transform: `
                 translate(-50%, -50%)
-                rotate(${item.rotation}deg)
-                scale(${item.scale})
+                rotate(${compositeImage.rotation}deg)
+                scale(${compositeImage.scale})
               `,
+              maxWidth: "500px",
+              pointerEvents: "none",
             }}
             draggable={false}
-            />
-        ))}
+          />
+        )}
 
         {/* Finger cursor */}
-        {fingerPos && mode === "HAND" && (
+        {fingerPos && mode === "TRYON_HAND" && (
           <div
             style={{
               position: "absolute",
@@ -599,7 +690,7 @@ function App() {
         )}
 
         {/* Body landmarks */}
-        {bodyLandmarks && bodyMeasurements && containerRef.current && mode === "BODY" && (
+        {bodyLandmarks && bodyMeasurements && containerRef.current && mode === "TRYON_BODY" && (
           <>
             {bodyLandmarks.map((landmark: any, index: number) => {
               const containerRect = containerRef.current!.getBoundingClientRect();
@@ -731,59 +822,17 @@ function App() {
         {/* Mode toggle button */}
         <div className="mode-toggle">
           <button
-            className={`mode-btn ${mode === "HAND" ? "active" : ""}`}
-            onClick={() => setMode("HAND")}
+            className={`mode-btn ${mode === "TRYON_HAND" ? "active" : ""}`}
+            onClick={() => setMode("TRYON_HAND")}
           >
             Hand Mode
           </button>
           <button
-            className={`mode-btn ${mode === "BODY" ? "active" : ""}`}
-            onClick={() => setMode("BODY")}
+            className={`mode-btn ${mode === "TRYON_BODY" ? "active" : ""}`}
+            onClick={() => setMode("TRYON_BODY")}
           >
             Body Mode
           </button>
-        </div>
-
-        {/* Upload button */}
-        <div className="upload-controls">
-          <button
-            className="upload-btn"
-            onClick={() => setShowUpload(!showUpload)}
-          >
-            Upload Design
-          </button>
-          {showUpload && (
-            <div className="upload-panel">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                style={{ display: 'none' }}
-              />
-              <button
-                className="upload-option"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                Upload from Device
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Items list */}
-        <div className="items-list">
-          <div className="items-header">Choose a clothing item:</div>
-          {clothingItems.map(item => (
-            <div
-              key={item.id}
-              className={`item-card ${selectedItemId === item.id ? "selected" : ""}`}
-              onClick={() => setSelectedItemId(item.id)}
-            >
-              <img src={item.url} alt={item.name}/>
-              <span>{item.name.slice(0, 15)}</span>
-            </div>
-          ))}
         </div>
 
         {/* Loading State */}
@@ -822,6 +871,86 @@ function App() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* WARDROBE / DESIGN VIEW */}
+      <div className="content-box wardrobe-container">
+        {/* template preview */}
+        {selectedTemplate && (
+          <img
+            src={selectedTemplate.url}
+            style={{
+              position: "absolute",
+              width: "50%",
+              height: "50%",
+              objectFit: "contain",
+            }}
+            draggable={false}
+          />
+        )}
+
+        {/* design on shirt */}
+        {design && (
+          <img
+            src={design.url}
+            style={{
+              position: "absolute",
+              left: design.position.x,
+              top: design.position.y,
+              transform: `
+                translate(-50%, -50%)
+                rotate(${design.rotation}deg)
+                scale(${design.scale})
+              `,
+              maxWidth: "300px",
+              pointerEvents: "none",
+              border: isPinching ? "2px solid lime" : "none",
+            }}
+            draggable={false}
+          />
+        )}
+
+        {/* Upload button */}
+        <div className="upload-controls">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
+          <button
+            className="upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {design ? "Change Design" : "Upload Design"}
+          </button>
+        </div>
+
+        {/* Save button */}
+        <div style={{ position: "absolute", bottom: 20, right: 20 }}>
+          <button className="upload-btn" onClick={handleSaveComposite}>
+            Save & Try On
+          </button>
+        </div>
+
+        {/* Hotbar */}
+        <div className="items-hotbar">
+          <div className="items-header">Choose a clothing item:</div>
+          <div className="items-row">
+            {TEMPLATES.map(item => (
+              <div
+                key={item.id}
+                className={`item-card ${selectedTemplate?.id === item.id ? "selected" : ""}`}
+                onClick={() => selectedTemplate?.id === item.id ? setSelectedTemplate(null) : setSelectedTemplate(item)}
+              >
+                <img src={item.url} alt={item.name} />
+                <span>{item.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
       </div>
     </div>
   );
