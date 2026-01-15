@@ -4,7 +4,8 @@ import { Pose } from "@mediapipe/pose";
 import { Camera } from "@mediapipe/camera_utils";
 import './App.css';
 
-import BLACK_TSHIRT from "./assets/shirt.png";
+import BLACK_TSHIRT from "./assets/black-shirt.png";
+import WHITE_TSHIRT from "./assets/white-shirt.png";
 
 // plan:
 // - choose a clothing item (shirt, color) -> display the shirt side-by-side camera
@@ -47,6 +48,11 @@ const TEMPLATES: Template[] = [
     id: "tshirt-black",
     url: BLACK_TSHIRT,
     name: "Black T-Shirt"
+  },
+  {
+    id: "tshirt-white",
+    url: WHITE_TSHIRT,
+    name: "White T-Shirt"
   },
   // add more
 ]
@@ -216,7 +222,7 @@ function useTracking(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!videoRef.current || mode === "DESIGN") return;
+    if (!videoRef.current) return;
 
     let hands: Hands | null = null;
     let pose: Pose | null = null;
@@ -274,10 +280,10 @@ function useTracking(
         camera = new Camera(videoRef.current!, {
           onFrame: async () => {
             if (videoRef.current && videoRef.current.readyState >= 2) {
-              if (mode == "TRYON_HAND") {
-                await hands!.send({ image: videoRef.current! });
-              } else if (mode === "TRYON_BODY") {
+              if (mode == "TRYON_BODY") {
                 await pose!.send({ image: videoRef.current! });
+              } else {
+                await hands!.send({ image: videoRef.current! });
               }
             }
           },
@@ -299,7 +305,7 @@ function useTracking(
       hands?.close();
       pose?.close();
     };
-  }, [videoRef, containerRef, mode, onHandDetected, onNoHand, onPoseDetected, onNoPose]);
+  }, [videoRef, containerRef, mode]);
 
   return { isInitialized, error };
 }
@@ -357,7 +363,7 @@ function App() {
     compositeRef.current = compositeImage;
   }, [compositeImage]);
 
-  //// file upload handler - alter this since we're only upload designs now, not clothing items
+  //// design upload handler
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -367,13 +373,12 @@ function App() {
       const imageUrl = event.target?.result as string;
       const newDesign: Design = {
         url: imageUrl,
-        position: { x: 1000, y: 300 },
+        position: { x: 1100, y: 300 },
         rotation: 0,
         scale: 1,
         name: file.name,
       };
       setDesign(newDesign);
-      //setShowUpload(false);
     };
     reader.readAsDataURL(file);
 
@@ -384,30 +389,29 @@ function App() {
 
   //// save composite image (template with user design) - fix this
   const handleSaveComposite = useCallback(() => {
-    if (!selectedTemplate || !design || !wardrobeRef.current) return;
+    if (!selectedTemplate || !design) return;
 
-    // Create a canvas to combine shirt + logo
+    // create a canvas to combine shirt + logo
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    // Set canvas size to match wardrobe container // should prob match same container as template item
-    const rect = wardrobeRef.current.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
 
     const shirtImg = new Image();
     shirtImg.src = selectedTemplate.url;
 
     shirtImg.onload = () => {
-      // Draw shirt
-      ctx.drawImage(shirtImg, 0, 0, canvas.width, canvas.height);
+      canvas.width = shirtImg.width;
+      canvas.height = shirtImg.height;
 
-      // Draw logo
+      // draw shirt
+      ctx.drawImage(shirtImg, 0, 0);
+
+      // draw logo
       const logoImg = new Image();
       logoImg.src = design.url;
 
       logoImg.onload = () => {
+        console.log(logoImg.src);
         ctx.save();
         ctx.translate(design.position.x, design.position.y);
         ctx.rotate((design.rotation * Math.PI) / 180);
@@ -415,16 +419,16 @@ function App() {
         ctx.drawImage(logoImg, -logoImg.width / 2, -logoImg.height / 2);
         ctx.restore();
 
-        // Save as composite
+        // save as composite
         const compositeUrl = canvas.toDataURL('image/png');
         setCompositeImage({
           url: compositeUrl,
-          position: { x: 400, y: 300 },  // Center of video
+          position: { x: 400, y: 300 },
           rotation: 0,
           scale: 1,
         });
         
-        // Switch to try-on mode
+        // switch to try-on mode
         setMode("TRYON_HAND");
       };
     };
@@ -438,7 +442,7 @@ function App() {
     (pos: Position, isPinching: boolean): Tool => {
       if (isPinching) return "NONE";
 
-      const container = mode === "DESIGN" ? wardrobeRef.current : containerRef.current;
+      const container = containerRef.current;
       if (isPointInElement(pos, moveBtnRef.current, container)) return "MOVE";
       else if (isPointInElement(pos, rotateBtnRef.current, container)) return "ROTATE";
       else if (isPointInElement(pos, scaleBtnRef.current, container)) return "SCALE";
@@ -654,7 +658,7 @@ function App() {
         {/* Composite image on camera */}
         {compositeImage && (
           <img
-            src="{compositeImage.url}"
+            src={compositeImage.url}
             style={{
               position: "absolute",
               left: compositeImage.position.x,
@@ -672,7 +676,7 @@ function App() {
         )}
 
         {/* Finger cursor */}
-        {fingerPos && mode === "TRYON_HAND" && (
+        {fingerPos && (
           <div
             style={{
               position: "absolute",
@@ -819,21 +823,23 @@ function App() {
           <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
         </div>
 
-        {/* Mode toggle button */}
-        <div className="mode-toggle">
-          <button
-            className={`mode-btn ${mode === "TRYON_HAND" ? "active" : ""}`}
-            onClick={() => setMode("TRYON_HAND")}
-          >
-            Hand Mode
-          </button>
-          <button
-            className={`mode-btn ${mode === "TRYON_BODY" ? "active" : ""}`}
-            onClick={() => setMode("TRYON_BODY")}
-          >
-            Body Mode
-          </button>
-        </div>
+        {/* Mode toggle button - after design */}
+        {mode !== "DESIGN" && (
+          <div className="mode-toggle">
+            <button
+              className={`mode-btn ${mode === "TRYON_HAND" ? "active" : ""}`}
+              onClick={() => setMode("TRYON_HAND")}
+            >
+              Hand Mode
+            </button>
+            <button
+              className={`mode-btn ${mode === "TRYON_BODY" ? "active" : ""}`}
+              onClick={() => setMode("TRYON_BODY")}
+            >
+              Body Mode
+            </button>
+          </div>
+        )}
 
         {/* Loading State */}
         {!isInitialized && !error && (
@@ -874,7 +880,7 @@ function App() {
       </div>
 
       {/* WARDROBE / DESIGN VIEW */}
-      <div className="content-box wardrobe-container">
+      <div ref={wardrobeRef} className="content-box wardrobe-container">
         {/* template preview */}
         {selectedTemplate && (
           <img
