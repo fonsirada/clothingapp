@@ -389,49 +389,83 @@ function App() {
 
   //// save composite image (template with user design) - fix this
   const handleSaveComposite = useCallback(() => {
-    if (!selectedTemplate || !design) return;
+    if (!selectedTemplate || !design || !wardrobeRef.current) return;
 
-    // create a canvas to combine shirt + logo
+    // create a canvas to combine template + logo
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const shirtImg = new Image();
-    shirtImg.src = selectedTemplate.url;
+    const templateImg = new Image();
+    const logoImg = new Image();
+    templateImg.src = selectedTemplate.url;
+    logoImg.src = design.url;
 
-    shirtImg.onload = () => {
-      canvas.width = shirtImg.width;
-      canvas.height = shirtImg.height;
+    Promise.all([
+      new Promise(resolve => templateImg.onload = resolve),
+      new Promise(resolve => logoImg.onload = resolve)
+    ]).then(() => {
+      canvas.width = templateImg.width;
+      canvas.height = templateImg.height;
 
-      // draw shirt
-      ctx.drawImage(shirtImg, 0, 0);
+      // draw template
+      ctx.drawImage(templateImg, 0, 0);
 
-      // draw logo
-      const logoImg = new Image();
-      logoImg.src = design.url;
+      const uiBoxWidth = wardrobeRef.current.offsetWidth * 0.5;
+      const uiBoxHeight = wardrobeRef.current.offsetHeight * 0.5;
 
-      logoImg.onload = () => {
-        console.log(logoImg.src);
-        ctx.save();
-        ctx.translate(design.position.x, design.position.y);
-        ctx.rotate((design.rotation * Math.PI) / 180);
-        ctx.scale(design.scale, design.scale);
-        ctx.drawImage(logoImg, -logoImg.width / 2, -logoImg.height / 2);
-        ctx.restore();
+      const imgRatio = templateImg.width / templateImg.height;
+      const boxRatio = uiBoxWidth / uiBoxHeight;
 
-        // save as composite
-        const compositeUrl = canvas.toDataURL('image/png');
-        setCompositeImage({
-          url: compositeUrl,
-          position: { x: 400, y: 300 },
-          rotation: 0,
-          scale: 1,
-        });
-        
-        // switch to try-on mode
-        setMode("TRYON_HAND");
-      };
-    };
+      let actualVisibleWidth = uiBoxWidth;
+      let actualVisibleHeight = uiBoxHeight;
+      let horizontalGap = 0;
+      let verticalGap = 0;
+
+      if (imgRatio > boxRatio) {
+        actualVisibleHeight = uiBoxWidth / imgRatio;
+        verticalGap = (uiBoxHeight - actualVisibleHeight) / 2;
+      } else {
+        actualVisibleWidth = uiBoxHeight * imgRatio;
+        horizontalGap = (uiBoxWidth - actualVisibleWidth) / 2;
+      }
+      
+      const pxRatio = templateImg.width / actualVisibleWidth;
+
+      const shirtLeftUI = (wardrobeRef.current.offsetWidth * 0.25) + horizontalGap;
+      const shirtTopUI = (wardrobeRef.current.offsetHeight * 0.15) + verticalGap;
+      const logoLeftUI = wardrobeRef.current.offsetWidth * 0.50;
+      const logoTopUI = wardrobeRef.current.offsetHeight * 0.40;
+
+      const offsetX = (logoLeftUI - shirtLeftUI) * pxRatio;
+      const offsetY = (logoTopUI - shirtTopUI) * pxRatio;
+
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      ctx.rotate((design.rotation * Math.PI) / 180);
+      const drawWidth = logoImg.width * design.scale * pxRatio * (actualVisibleWidth / templateImg.width);
+      const drawHeight = logoImg.height * design.scale * pxRatio * (actualVisibleWidth / templateImg.width);
+      ctx.drawImage(
+        logoImg,
+        -drawWidth / 2,
+        -drawHeight / 2,
+        drawWidth,
+        drawHeight
+      );
+      ctx.restore();
+
+       // save as composite
+      const compositeUrl = canvas.toDataURL('image/png');
+      setCompositeImage({
+        url: compositeUrl,
+        position: { x: 400, y: 300 },
+        rotation: 0,
+        scale: 1,
+      });
+      
+      // switch to try-on mode
+      setMode("TRYON_HAND");
+    });
   }, [selectedTemplate, design]);
 
   //// tool selection logic
@@ -887,6 +921,8 @@ function App() {
             src={selectedTemplate.url}
             style={{
               position: "absolute",
+              left: "25%",
+              top: "15%",
               width: "50%",
               height: "50%",
               objectFit: "contain",
@@ -901,8 +937,8 @@ function App() {
             src={design.url}
             style={{
               position: "absolute",
-              left: design.position.x,
-              top: design.position.y,
+              left: "50%",
+              top: "40%",
               transform: `
                 translate(-50%, -50%)
                 rotate(${design.rotation}deg)
@@ -915,30 +951,6 @@ function App() {
             draggable={false}
           />
         )}
-
-        {/* Upload button */}
-        <div className="upload-controls">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-          />
-          <button
-            className="upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {design ? "Change Design" : "Upload Design"}
-          </button>
-        </div>
-
-        {/* Save button */}
-        <div style={{ position: "absolute", bottom: 20, right: 20 }}>
-          <button className="upload-btn" onClick={handleSaveComposite}>
-            Save & Try On
-          </button>
-        </div>
 
         {/* Hotbar */}
         <div className="items-hotbar">
@@ -956,7 +968,30 @@ function App() {
             ))}
           </div>
         </div>
+      </div>
 
+      {/* Upload button */}
+      <div className="upload-controls">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+        <button
+          className="upload-btn"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {design ? "Change Design" : "Upload Design"}
+        </button>
+      </div>
+
+      {/* Save button */}
+      <div style={{ position: "absolute", bottom: 20, right: 20 }}>
+        <button className="upload-btn" onClick={handleSaveComposite}>
+          Save & Try On
+        </button>
       </div>
     </div>
   );
