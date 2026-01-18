@@ -59,7 +59,7 @@ const TEMPLATES: Template[] = [
 
 //// types
 type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
-type Mode = "DESIGN" | "TRYON_HAND" | "TRYON_BODY";
+type Mode = "UPLOAD" | "ADJUST" | "TRYON_HAND" | "TRYON_BODY";
 
 interface Position {
   x: number;
@@ -316,7 +316,7 @@ function App() {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [design, setDesign] = useState<Design | null> (null);
   const [compositeImage, setCompositeImage] = useState<CompositeImage | null>(null);
-  const [mode, setMode] = useState<Mode>("DESIGN");
+  const [mode, setMode] = useState<Mode>("UPLOAD");
 
   const [fingerPos, setFingerPos] = useState<Position | null>(null);
   const [isPinching, setPinching] = useState(false);
@@ -385,6 +385,7 @@ function App() {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    setMode("ADJUST");
   }, []);
 
   //// save composite image (template with user design) - fix this
@@ -527,7 +528,7 @@ function App() {
     if (!isPinching) return;
 
     // design mode: manipulate logo
-    if (mode === "DESIGN" && design) {
+    if (mode === "ADJUST" && design) {
       switch (currentTool) {
         case "MOVE":
           setDesign(prev => prev ? { ...prev, position: pos } : null);
@@ -681,240 +682,138 @@ function App() {
     handleNoPose
   );
 
+  const renderToolbar = (mode: Mode) => {
+    switch (mode) {
+      case "ADJUST":
+        // display templates if one not chosen
+        if (!selectedTemplate) return (
+          <div className="items-row">
+          {TEMPLATES.map(item => (
+            <div
+              key={item.id}
+              className={`item-card ${selectedTemplate?.id === item.id ? "selected" : ""}`}
+              onClick={() => selectedTemplate?.id === item.id ? setSelectedTemplate(null) : setSelectedTemplate(item)}
+            >
+              <img src={item.url} alt={item.name} />
+              <span>{item.name}</span>
+            </div>
+          ))}
+          </div>
+        )
+        // otherwise display appropriate tools
+        return (
+          <>
+            <div className="toolbar top">
+              <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
+              <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
+            </div>
+            <div className="toolbar bottom">
+              <button className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>
+                Switch Template
+              </button>
+              <button className="tool save-btn" onClick={handleSaveComposite}>Try on</button>
+            </div>
+          </>
+        );
+
+      case "TRYON_HAND":
+        return (
+          <>
+            <div className="toolbar top">
+              <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
+              <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
+              <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
+            </div>
+            <div className="toolbar bottom">
+              <button className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>Switch Template</button>
+              <button className="tool" onClick={() => setMode("TRYON_BODY")}>Snap to Body (Full Screen)</button>
+            </div>
+          </>
+        );
+      case "TRYON_BODY":
+        return (
+          <>
+            <div className="toolbar bottom">
+              <button className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>Switch Template</button>
+              <button className="tool" onClick={() => setMode("TRYON_HAND")}>Release Snap</button>
+            </div>
+          </>
+        );
+    }
+  };
+
   //// render
   return (
     <div className="app-wrapper">
 
-      {/* VIDEO / TRYON VIEW */}
-      <div ref={containerRef} className="content-box video-container">
-        <video ref={videoRef} autoPlay playsInline />
+      {/* VIDEO / TRYON VIEW -- only on after uploading a design */}
+      {mode !== "UPLOAD" && (
+        <div ref={containerRef} className="content-box video-container">
+          <video ref={videoRef} autoPlay playsInline />
 
-        {/* Composite image on camera */}
-        {compositeImage && (
-          <img
-            src={compositeImage.url}
-            style={{
-              position: "absolute",
-              left: compositeImage.position.x,
-              top: compositeImage.position.y,
-              transform: `
-                translate(-50%, -50%)
-                rotate(${compositeImage.rotation}deg)
-                scale(${compositeImage.scale})
-              `,
-              maxWidth: "500px",
-              pointerEvents: "none",
-            }}
-            draggable={false}
-          />
-        )}
+          {/* Composite image on camera */}
+          {compositeImage && (
+            <img
+              src={compositeImage.url}
+              style={{
+                position: "absolute",
+                left: compositeImage.position.x,
+                top: compositeImage.position.y,
+                transform: `
+                  translate(-50%, -50%)
+                  rotate(${compositeImage.rotation}deg)
+                  scale(${compositeImage.scale})
+                `,
+                maxWidth: "500px",
+                pointerEvents: "none",
+              }}
+              draggable={false}
+            />
+          )}
 
-        {/* Finger cursor */}
-        {fingerPos && (
-          <div
-            style={{
-              position: "absolute",
-              left: fingerPos.x,
-              top: fingerPos.y,
-              width: CURSOR_SIZE,
-              height: CURSOR_SIZE,
-              borderRadius: "50%",
-              background: isPinching? "lime" : "red",
-              transform: "translate(-50%, -50%)",
-              pointerEvents: "none",
-              zIndex: 10
-            }}
-          />
-        )}
-
-        {/* Body landmarks */}
-        {bodyLandmarks && bodyMeasurements && containerRef.current && mode === "TRYON_BODY" && (
-          <>
-            {bodyLandmarks.map((landmark: any, index: number) => {
-              const containerRect = containerRef.current!.getBoundingClientRect();
-              const x = containerRect.width - (landmark.x * containerRect.width);
-              const y = landmark.y * containerRect.height;
-
-              return (
-                <div
-                  key={index}
-                  style={{
-                    position: "absolute",
-                    left: x,
-                    top: y,
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: "cyan",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "none",
-                    zIndex: 5
-                  }}
-                />
-              );
-            })}
-
-            {/* key points */}
-            {(() => {
-              const containerRect = containerRef.current!.getBoundingClientRect();
-              const keyPoints = getKeyBodyPoints(bodyLandmarks, containerRect);
-              
-              return (
-                <>
-                  {/* Left Shoulder */}
-                  <div style={{
-                    position: "absolute",
-                    left: keyPoints.leftShoulder.x,
-                    top: keyPoints.leftShoulder.y,
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: "lime",
-                    border: "2px solid white",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "none",
-                    zIndex: 6,
-                  }} />
-                  
-                  {/* Right Shoulder */}
-                  <div style={{
-                    position: "absolute",
-                    left: keyPoints.rightShoulder.x,
-                    top: keyPoints.rightShoulder.y,
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: "lime",
-                    border: "2px solid white",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "none",
-                    zIndex: 6,
-                  }} />
-                  
-                  {/* Chest Center */}
-                  <div style={{
-                    position: "absolute",
-                    left: bodyMeasurements.chestCenter.x,
-                    top: bodyMeasurements.chestCenter.y,
-                    width: 16,
-                    height: 16,
-                    borderRadius: "50%",
-                    background: "yellow",
-                    border: "3px solid white",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "none",
-                    zIndex: 7,
-                  }} />
-                  
-                  {/* Shoulder line */}
-                  <svg style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    width: "100%",
-                    height: "100%",
-                    pointerEvents: "none",
-                    zIndex: 5,
-                  }}>
-                    <line
-                      x1={keyPoints.leftShoulder.x}
-                      y1={keyPoints.leftShoulder.y}
-                      x2={keyPoints.rightShoulder.x}
-                      y2={keyPoints.rightShoulder.y}
-                      stroke="lime"
-                      strokeWidth="3"
-                    />
-                  </svg>
-                </>
-              );
-            })()}
-
-            {/* Measurement display */}
-            <div style={{
-              position: "absolute",
-              top: 10,
-              left: 10,
-              background: "rgba(0, 0, 0, 0.8)",
-              color: "white",
-              padding: "10px",
-              borderRadius: "8px",
-              fontSize: "12px",
-              fontFamily: "monospace",
-              zIndex: 10,
-            }}>
-              <div>Shoulder Width: {Math.round(bodyMeasurements.shoulderWidth)}px</div>
-              <div>Shoulder Angle: {Math.round(bodyMeasurements.shoulderAngle)}°</div>
-              <div>Torso Height: {Math.round(bodyMeasurements.torsoHeight)}px</div>
-              <div>Chest Center: ({Math.round(bodyMeasurements.chestCenter.x)}, {Math.round(bodyMeasurements.chestCenter.y)})</div>
-            </div>
-          </>
-        )}
-
-        {/* Toolbar */}
-        <div className="toolbar">
-          <div ref={moveBtnRef} className={`tool ${activeTool === "MOVE" ? "active" : ""}`}>MOVE</div>
-          <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
-          <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
+          {/* Finger cursor */}
+          {fingerPos && (
+            <div
+              style={{
+                position: "absolute",
+                left: fingerPos.x,
+                top: fingerPos.y,
+                width: CURSOR_SIZE,
+                height: CURSOR_SIZE,
+                borderRadius: "50%",
+                background: isPinching? "lime" : "red",
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+                zIndex: 10
+              }}
+            />
+          )}
+          
+          {/* ---- TOOLBAR ---- */}
+          {renderToolbar(mode)}
         </div>
-
-        {/* Mode toggle button - after design */}
-        {mode !== "DESIGN" && (
-          <div className="mode-toggle">
-            <button
-              className={`mode-btn ${mode === "TRYON_HAND" ? "active" : ""}`}
-              onClick={() => setMode("TRYON_HAND")}
-            >
-              Hand Mode
-            </button>
-            <button
-              className={`mode-btn ${mode === "TRYON_BODY" ? "active" : ""}`}
-              onClick={() => setMode("TRYON_BODY")}
-            >
-              Body Mode
-            </button>
-          </div>
-        )}
-
-        {/* Loading State */}
-        {!isInitialized && !error && (
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0,0,0,0.75)',
-            color: 'white',
-            fontSize: '20px'
-          }}>
-            Initializing camera...
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0,0,0,0.75)',
-            color: '#ff4444',
-            fontSize: '20px',
-            textAlign: 'center',
-            padding: '20px'
-          }}>
-            <div>
-              <div style={{ marginBottom: '10px' }}>Camera Error</div>
-              <div style={{ fontSize: '14px' }}>{error}</div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* WARDROBE / DESIGN VIEW */}
       <div ref={wardrobeRef} className="content-box wardrobe-container">
+        {/* upload & save button */}
+        <div className="design-buttons" style={{ bottom : (mode === "UPLOAD") ? "50%" : "0" }}>
+          {/* upload button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
+          <button
+            className="design-btn upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {design ? "Change Design" : "Upload Design"}
+          </button>
+        </div>
+
         {/* template preview */}
         {selectedTemplate && (
           <img
@@ -950,48 +849,7 @@ function App() {
             }}
             draggable={false}
           />
-        )}
-
-        {/* Hotbar */}
-        <div className="items-hotbar">
-          <div className="items-header">Choose a clothing item:</div>
-          <div className="items-row">
-            {TEMPLATES.map(item => (
-              <div
-                key={item.id}
-                className={`item-card ${selectedTemplate?.id === item.id ? "selected" : ""}`}
-                onClick={() => selectedTemplate?.id === item.id ? setSelectedTemplate(null) : setSelectedTemplate(item)}
-              >
-                <img src={item.url} alt={item.name} />
-                <span>{item.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Upload button */}
-      <div className="upload-controls">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-        />
-        <button
-          className="upload-btn"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          {design ? "Change Design" : "Upload Design"}
-        </button>
-      </div>
-
-      {/* Save button */}
-      <div style={{ position: "absolute", bottom: 20, right: 20 }}>
-        <button className="upload-btn" onClick={handleSaveComposite}>
-          Save & Try On
-        </button>
+        )}  
       </div>
     </div>
   );
