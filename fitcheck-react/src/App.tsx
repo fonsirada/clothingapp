@@ -390,7 +390,7 @@ function App() {
 
   //// save composite image (template with user design) - fix this
   const handleSaveComposite = useCallback(() => {
-    if (!selectedTemplate || !design || !wardrobeRef.current) return;
+    if (!selectedTemplate || !designRef.current || !wardrobeRef.current) return;
 
     // create a canvas to combine template + logo
     const canvas = document.createElement('canvas');
@@ -400,7 +400,7 @@ function App() {
     const templateImg = new Image();
     const logoImg = new Image();
     templateImg.src = selectedTemplate.url;
-    logoImg.src = design.url;
+    logoImg.src = designRef.current.url;
 
     Promise.all([
       new Promise(resolve => templateImg.onload = resolve),
@@ -528,13 +528,10 @@ function App() {
     if (!isPinching) return;
 
     // design mode: manipulate logo
-    if (mode === "ADJUST" && design) {
+    if (mode === "ADJUST" && designRef.current) {
       switch (currentTool) {
-        case "MOVE":
-          setDesign(prev => prev ? { ...prev, position: pos } : null);
-          break;
-
         case "ROTATE": {
+          console.log("here");
           if (rotationStartRef.current === null) {
             rotationStartRef.current = pos.y;
             return;
@@ -730,6 +727,7 @@ function App() {
             </div>
           </>
         );
+
       case "TRYON_BODY":
         return (
           <>
@@ -821,7 +819,7 @@ function App() {
             style={{
               position: "absolute",
               left: "25%",
-              top: "15%",
+              top: "25%",
               width: "50%",
               height: "50%",
               objectFit: "contain",
@@ -837,7 +835,7 @@ function App() {
             style={{
               position: "absolute",
               left: "50%",
-              top: "40%",
+              top: "50%",
               transform: `
                 translate(-50%, -50%)
                 rotate(${design.rotation}deg)
