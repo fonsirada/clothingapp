@@ -58,8 +58,8 @@ const TEMPLATES: Template[] = [
 ]
 
 //// types
-type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE";
-type Mode = "UPLOAD" | "ADJUST" | "TRYON_HAND" | "TRYON_BODY";
+type Tool = "NONE" | "MOVE" | "ROTATE" | "SCALE" | "LEFT_CHEST" | "CENTER_CHEST" | "RIGHT_CHEST" | "CHANGE_POS" | "CHANGE_TEMP" | "SAVE";
+type Mode = "UPLOAD" | "ADJUST_POS" | "ADJUST" | "TRYON_HAND" | "TRYON_BODY";
 
 interface Position {
   x: number;
@@ -116,20 +116,6 @@ function isPointInElement(
 
   return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
 }
-
-// /**
-//  * checks if a point is within a clothing item's bound
-//  */
-// function isPointInItem(point: Position, item: ClothingItem): boolean {
-//   const itemSize = 200 * item.scale;
-//   const halfSize = itemSize / 2;
-//   return (
-//     point.x >= item.position.x - halfSize &&
-//     point.x <= item.position.x + halfSize && 
-//     point.y >= item.position.y - halfSize && 
-//     point.y <= item.position.y + halfSize
-//   );
-// }
 
 /**
  * detects pinching with distance between thumb and index finger
@@ -331,11 +317,18 @@ function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const wardrobeRef = useRef<HTMLDivElement>(null);
+
+  const changePosBtnRef = useRef<HTMLDivElement>(null);
+  const leftChestBtnRef = useRef<HTMLDivElement>(null);
+  const centerChestBtnRef = useRef<HTMLDivElement>(null);
+  const rightChestBtnRef = useRef<HTMLDivElement>(null);
+  const changeTmpBtnRef = useRef<HTMLDivElement>(null);
   const moveBtnRef = useRef<HTMLDivElement>(null);
   const rotateBtnRef = useRef<HTMLDivElement>(null);
   const scaleBtnRef = useRef<HTMLDivElement>(null);
+  const saveBtnRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   //// refs - transform state
   const designRef = useRef<Design | null>(null);
   const compositeRef = useRef<CompositeImage | null>(null);
@@ -385,7 +378,7 @@ function App() {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-    setMode("ADJUST");
+    setMode("ADJUST_POS");
   }, []);
 
   //// save composite image (template with user design) - fix this
@@ -481,6 +474,12 @@ function App() {
       if (isPointInElement(pos, moveBtnRef.current, container)) return "MOVE";
       else if (isPointInElement(pos, rotateBtnRef.current, container)) return "ROTATE";
       else if (isPointInElement(pos, scaleBtnRef.current, container)) return "SCALE";
+      else if (isPointInElement(pos, leftChestBtnRef.current, container)) return "LEFT_CHEST";
+      else if (isPointInElement(pos, centerChestBtnRef.current, container)) return "CENTER_CHEST";
+      else if (isPointInElement(pos, rightChestBtnRef.current, container)) return "RIGHT_CHEST";
+      else if (isPointInElement(pos, changePosBtnRef.current, container)) return "CHANGE_POS";
+      else if (isPointInElement(pos, changeTmpBtnRef.current, container)) return "CHANGE_TEMP";
+      else if (isPointInElement(pos, saveBtnRef.current, container)) return "SAVE";
       
       return "NONE";
     }, [mode]
@@ -527,11 +526,12 @@ function App() {
 
     if (!isPinching) return;
 
+    // add button presets
+
     // design mode: manipulate logo
     if (mode === "ADJUST" && designRef.current) {
       switch (currentTool) {
         case "ROTATE": {
-          console.log("here");
           if (rotationStartRef.current === null) {
             rotationStartRef.current = pos.y;
             return;
@@ -679,36 +679,55 @@ function App() {
     handleNoPose
   );
 
+  const renderTemplates = () => {
+    return (
+      <div className="items-row">
+        {TEMPLATES.map(item => (
+          <div
+            key={item.id}
+            className={`item-card ${selectedTemplate?.id === item.id ? "selected" : ""}`}
+            onClick={() => selectedTemplate?.id === item.id ? setSelectedTemplate(null) : setSelectedTemplate(item)}
+          >
+            <img src={item.url} alt={item.name} />
+            <span>{item.name}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderToolbar = (mode: Mode) => {
     switch (mode) {
-      case "ADJUST":
-        // display templates if one not chosen
-        if (!selectedTemplate) return (
-          <div className="items-row">
-          {TEMPLATES.map(item => (
-            <div
-              key={item.id}
-              className={`item-card ${selectedTemplate?.id === item.id ? "selected" : ""}`}
-              onClick={() => selectedTemplate?.id === item.id ? setSelectedTemplate(null) : setSelectedTemplate(item)}
-            >
-              <img src={item.url} alt={item.name} />
-              <span>{item.name}</span>
-            </div>
-          ))}
-          </div>
-        )
-        // otherwise display appropriate tools
+      case "ADJUST_POS":
+        // display templates if not chosen, otherwise display tools
+        if (!selectedTemplate) return renderTemplates();
         return (
           <>
             <div className="toolbar top">
+              <div ref={leftChestBtnRef} className={`tool ${activeTool === "LEFT_CHEST" ? "active" : ""}`}>LEFT CHEST</div>
+              <div ref={centerChestBtnRef} className={`tool ${activeTool === "CENTER_CHEST" ? "active" : ""}`}>CENTER CHEST</div>
+              <div ref={rightChestBtnRef} className={`tool ${activeTool === "RIGHT_CHEST" ? "active" : ""}`}>RIGHT CHEST</div>
+            </div>
+            <div className="toolbar bottom">
+              <div ref={changeTmpBtnRef} className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>
+                CHANGE TEMPLATE
+              </div>
+            </div>
+          </>
+        );
+      case "ADJUST":
+        return (
+          <>
+            <div className="toolbar top">
+              <div ref={changePosBtnRef} className={`tool`}>CHANGE POSITION</div>
               <div ref={rotateBtnRef} className={`tool ${activeTool === "ROTATE" ? "active" : ""}`}>ROTATE</div>
               <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
             </div>
             <div className="toolbar bottom">
-              <button className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>
-                Switch Template
-              </button>
-              <button className="tool save-btn" onClick={handleSaveComposite}>Try on</button>
+              <div ref={changeTmpBtnRef} className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>
+                CHANGE TEMPLATE
+              </div>
+              <div ref={saveBtnRef} className="tool save-btn" onClick={handleSaveComposite}>Try on</div>
             </div>
           </>
         );
@@ -722,8 +741,8 @@ function App() {
               <div ref={scaleBtnRef} className={`tool ${activeTool === "SCALE" ? "active" : ""}`}>SCALE</div>
             </div>
             <div className="toolbar bottom">
-              <button className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>Switch Template</button>
-              <button className="tool" onClick={() => setMode("TRYON_BODY")}>Snap to Body (Full Screen)</button>
+              <div ref={changeTmpBtnRef} className="tool template-btn" onClick={() => {setSelectedTemplate(null); setMode("ADJUST")}}>CHANGE TEMPLATE</div>
+              <div ref={saveBtnRef} className="tool" onClick={() => setMode("TRYON_BODY")}>Snap to Body (Full Screen)</div>
             </div>
           </>
         );
